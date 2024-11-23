@@ -1,0 +1,571 @@
+from gurobipy import *
+import folium
+from geopy.distance import geodesic
+from shapely.geometry import Point, LineString
+from Visualization import visualize_routes, visualize_schedule
+
+#=============================================================================================================================
+#  Define Classes for Nodes, Containers, Arcs, Barges, and Trucks
+#=============================================================================================================================
+
+class Node:
+    def __init__(self, node_id, node_type='terminal'):
+        self.id = node_id
+        self.type = node_type  # 'depot' or 'terminal'
+        self.in_arcs = []       # List to store incoming arcs
+        self.out_arcs = []      # List to store outgoing arcs
+
+    def add_in_arc(self, arc):
+        self.in_arcs.append(arc)
+
+    def add_out_arc(self, arc):
+        self.out_arcs.append(arc)
+
+class Container:
+    def __init__(self, container_id, size, release_date, opening_date, closing_date, origin, destination, container_type):
+        self.id = container_id
+        self.size = size                      # Wc: Size or weight of the container
+        self.release_date = release_date      # Rc: Earliest time container is available for loading
+        self.opening_date = opening_date      # Oc: Earliest time container can be unloaded at destination
+        self.closing_date = closing_date      # Dc: Latest time container must be unloaded
+        self.origin = origin                  # Origin node ID (depot or terminal)
+        self.destination = destination        # Destination node ID (depot or terminal)
+        self.type = container_type            # 'I' for import, 'E' for export
+
+class Arc:
+    def __init__(self, origin, destination, travel_time):
+        self.origin = origin                  # Origin node ID
+        self.destination = destination        # Destination node ID
+        self.travel_time = travel_time        # Tij: Travel time in minutes between origin and destination
+
+class Barge:
+    def __init__(self, barge_id, capacity, fixed_cost):
+        self.id = barge_id                    # Unique identifier for the barge
+        self.capacity = capacity              # Qk: Maximum capacity of the barge
+        self.fixed_cost = fixed_cost          # Hk^B: Fixed cost associated with using the barge
+
+class Truck:
+    def __init__(self, cost_per_container):
+        self.cost_per_container = cost_per_container  # HT: Cost per container transported by truck
+
+#=============================================================================================================================
+#  Auxiliary Functions
+#=============================================================================================================================
+
+def construct_network():
+    """
+    Constructs the transportation network by defining nodes, containers, arcs, barges, and trucks.
+    Returns:
+        nodes (dict): Dictionary of Node objects keyed by node ID.
+        arcs (list): List of Arc objects representing possible routes.
+        containers (dict): Dictionary of Container objects keyed by container ID.
+        barges (dict): Dictionary of Barge objects keyed by barge ID.
+        truck (Truck): Truck object with associated costs.
+        HT (dict): Dictionary mapping truck IDs to their cost per container.
+        node_coords (dict): Dictionary mapping node IDs to their (latitude, longitude) coordinates.
+    """
+    # Define nodes with their types
+    nodes = {
+        0: Node(0, 'depot'),       # Depot 1
+        1: Node(1, 'depot'),       # Depot 2
+        2: Node(2, 'terminal'),    # Terminal 1
+        3: Node(3, 'terminal'),    # Terminal 2
+        4: Node(4, 'terminal'),    # Terminal 3
+        5: Node(5, 'terminal'),    # Terminal 4
+        6: Node(6, 'terminal'),    # Terminal 5
+    }
+
+    # Define coordinates for each node (latitude, longitude)
+    node_coords = {
+        0: (51.957979, 4.052421),  # Depot 1
+        1: (51.912345, 4.234567),  # Depot 2 (example coordinates)
+        2: (51.948060, 4.063992),  # Terminal 1
+        3: (51.955480, 4.052490),  # Terminal 2
+        4: (51.961111, 4.034722),  # Terminal 3
+        5: (51.906540, 4.122230),  # Terminal 4
+        6: (51.904251, 4.141221),  # Terminal 5
+    }
+
+    # Define containers with their attributes
+    containers_data = [
+        # container_id, size, release_date, opening_date, closing_date, origin, destination, container_type
+        (1, 1, 2, 5, 12, 0, 2, 'E'),  # From Depot 0 to Terminal 2
+        (2, 2, 4, 6, 10, 1, 3, 'E'),  # From Depot 1 to Terminal 3
+        (3, 1, 1, 4, 8, 0, 4, 'E'),   # From Depot 0 to Terminal 4
+        (4, 2, 3, 7, 9, 1, 5, 'E'),   # From Depot 1 to Terminal 5
+        (5, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 6
+        (6, 2, 6, 10, 14, 1, 2, 'E'), # From Depot 1 to Terminal 2
+        # Import Containers (from Terminals to Depots)
+        (7, 1, None, 3, 9, 2, 0, 'I'),  # From Terminal 2 to Depot 0
+        (8, 2, None, 2, 7, 3, 1, 'I'),  # From Terminal 3 to Depot 1
+        (9, 1, None, 5, 11, 4, 0, 'I'), # From Terminal 4 to Depot 0
+        (10,2, None, 6, 12, 5, 1, 'I'), # From Terminal 5 to Depot 1
+        (11,1, None, 8, 14, 6, 0, 'I'), # From Terminal 6 to Depot 0
+        (12,2, None, 9, 15, 2, 1, 'I'), # From Terminal 2 to Depot 1
+    ]
+
+    # Initialize containers dictionary
+    containers = {}
+    for data in containers_data:
+        c = Container(*data)      # Unpack data into Container constructor
+        containers[c.id] = c      # Add to containers dictionary
+
+    # Calculate travel times between nodes (in minutes)
+    # Assume average speed of 20 km/h for barges and trucks
+    Tij = {}
+    for i in nodes:
+        for j in nodes:
+            if i != j:
+                distance = geodesic(node_coords[i], node_coords[j]).kilometers  # Calculate distance in km
+                travel_time = distance / 20 * 60  # Convert speed to travel time in minutes
+                Tij[(i, j)] = travel_time
+
+    # Create arcs based on calculated travel times
+    arcs = []
+    for (i, j), time in Tij.items():
+        arc = Arc(i, j, time)       # Create Arc object
+        arcs.append(arc)            # Add to arcs list
+        nodes[i].add_out_arc(arc)   # Add to origin node's outgoing arcs
+        nodes[j].add_in_arc(arc)    # Add to destination node's incoming arcs
+
+    # Define barges with their capacities and fixed costs
+    barges_data = [
+        (1, 10, 1000),  # Barge 1: Capacity=10, Fixed Cost=1000
+        (2, 10, 1000),  # Barge 2: Capacity=10, Fixed Cost=1000
+    ]
+    barges = {barge_id: Barge(barge_id, capacity, fixed_cost)
+              for barge_id, capacity, fixed_cost in barges_data}
+
+    # Define trucks with their cost per container
+    HT = {1: 1500, 2: 1500}  # Truck 1 costs 500 per container, Truck 2 costs 800
+                             # change time per truck also if you want to change the cost
+
+    truck = Truck(cost_per_container=HT)
+    return nodes, arcs, containers, barges, truck, HT, node_coords
+
+def check_model_status(model):
+    """
+    Checks the status of the Gurobi optimization model and handles various scenarios.
+    Args:
+        model (gurobipy.Model): The Gurobi model to check.
+    """
+    status = model.Status
+    if status != GRB.OPTIMAL and status != GRB.INTERRUPTED:
+        if status == GRB.UNBOUNDED:
+            print('The model cannot be solved because it is unbounded')
+        elif status == GRB.INFEASIBLE:
+            print('The model is infeasible; computing IIS')
+            model.computeIIS()
+            print('The following constraint(s) cannot be satisfied:')
+            for c in model.getConstrs():
+                if c.IISConstr:
+                    print(c.ConstrName)
+        elif status != GRB.INF_OR_UNBD:
+            print('Optimization was stopped with status', status)
+        exit(0)
+
+def print_model_result(model, variables, barges, containers):
+    """
+    Prints the results of the optimization model, including objective value, container allocations, and barge routes.
+    Args:
+        model (gurobipy.Model): The optimized Gurobi model.
+        variables (dict): Dictionary containing model variables and their values.
+        barges (dict): Dictionary of Barge objects.
+        containers (dict): Dictionary of Container objects.
+    """
+    print("\nOptimal Objective Value:", model.ObjVal)
+    print("\nContainer Allocations:")
+    f_ck = variables['f_ck']  # Container to vehicle allocation variables
+    for c in containers.values():
+        assigned = False
+        for k in barges.keys():
+            if f_ck[c.id, k].X > 0.5:
+                print(f"Container {c.id} is allocated to Barge {k}")
+                assigned = True
+        if f_ck[c.id, 'T'].X > 0.5:
+            print(f"Container {c.id} is allocated to Truck")
+            assigned = True
+        if not assigned:
+            print(f"Container {c.id} is not assigned to any vehicle.")
+
+    print("\nBarge Routes:")
+    x_ijk = variables['x_ijk']  # Barge route selection variables
+    for k in barges.keys():
+        print(f"\nBarge {k} Route:")
+        route = []
+        for (i, j), var in x_ijk[k].items():
+            if var.X > 0.5:
+                route.append((i, j))
+        if route:
+            for arc in route:
+                print(f"{arc[0]} -> {arc[1]}")
+        else:
+            print("No route for this barge.")
+
+#=============================================================================================================================
+#  Optimization of the Model using Gurobi
+#=============================================================================================================================
+
+def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords):
+    """
+    Optimizes barge and truck scheduling for transporting containers between depots and terminals.
+    Args:
+        nodes (dict): Dictionary of Node objects.
+        arcs (list): List of Arc objects representing possible routes.
+        containers (dict): Dictionary of Container objects.
+        barges (dict): Dictionary of Barge objects.
+        truck (Truck): Truck object with associated costs.
+        HT (dict): Dictionary mapping truck IDs to cost per container.
+        node_coords (dict): Dictionary mapping node IDs to their (latitude, longitude) coordinates.
+    """
+    # Initialize model
+    model = Model("BargeScheduling")
+
+    # Big M
+    M = 10000  # A large constant used in Big M method for conditional constraints
+
+    # Define sets
+    N = list(nodes.keys())                         # Set of all node IDs
+    C = list(containers.keys())                    # Set of all container IDs
+    E = [c.id for c in containers.values() if c.type == 'E']  # Export containers
+    I = [c.id for c in containers.values() if c.type == 'I']  # Import containers
+    K = list(barges.keys()) + ['T']                # Set of barges and 'T' representing trucks
+    KB = list(barges.keys())                       # Set of barges only
+
+    # Define parameters
+    Wc = {c.id: c.size for c in containers.values()}  # Wc: Container sizes
+    Rc = {c.id: c.release_date for c in containers.values() if c.type == 'E'}  # Rc: Release dates for export containers
+    Oc = {c.id: c.opening_date for c in containers.values()}  # Oc: Opening dates for all containers
+    Dc = {c.id: c.closing_date for c in containers.values()}  # Dc: Closing dates for all containers
+
+    T_max = {k: 500 for k in KB}  #All barges have a max time of 500 minutes
+    T_max_trucks = {1: 300, 2: 400}  # Max times for trucks
+
+    # Zcj: Indicator if container c is associated with node j
+    Zcj = {}
+    for c in containers.values():
+        if c.type == 'E':
+            Zcj[c.id, c.destination] = 1  # Export containers are associated with their destination
+        else:
+            Zcj[c.id, c.origin] = 1      # Import containers are associated with their origin
+
+    HBk = {k: barges[k].fixed_cost for k in barges.keys()}  # HBk: Fixed costs for each barge
+    Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
+    Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
+
+    L = 0.5      # Handling time per container (e.g., loading/unloading time)
+    gamma = 50   # Penalty cost for visiting sea terminals unnecessarily
+
+    #=========================================================================================================================
+    #  Define Decision Variables
+    #=========================================================================================================================
+
+    # f_ck: Binary variable indicating if container c is assigned to vehicle k
+    f_ck = {}
+    for c in C:
+        for k in K:
+            f_ck[c, k] = model.addVar(vtype=GRB.BINARY, name=f"f_{c}_{k}")
+
+    # x_ijk: Binary variable indicating if barge k traverses arc (i, j)
+    x_ijk = {}
+    for k in KB:
+        x_ijk[k] = {}
+        for i in N:
+            for j in N:
+                if i != j and (i, j) in Tij:
+                    x_ijk[k][(i, j)] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{j}_{k}")
+
+    # p_jk: Continuous variable representing import quantities loaded by barge k at terminal j
+    # d_jk: Continuous variable representing export quantities unloaded by barge k at terminal j
+    p_jk = {}
+    d_jk = {}
+    for k in KB:
+        for j in N:
+            p_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"p_{j}_{k}")
+            d_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"d_{j}_{k}")
+
+    # y_ijk: Continuous variable for import containers on arc (i, j) by barge k
+    # z_ijk: Continuous variable for export containers on arc (i, j) by barge k
+    y_ijk = {}
+    z_ijk = {}
+    for k in KB:
+        y_ijk[k] = {}
+        z_ijk[k] = {}
+        for i in N:
+            for j in N:
+                if i != j and (i, j) in Tij:
+                    y_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"y_{i}_{j}_{k}")
+                    z_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"z_{i}_{j}_{k}")
+
+    # t_jk: Continuous variable representing the arrival time of barge k at node j
+    t_jk = {}
+    for k in KB:
+        for j in N:
+            t_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"t_{j}_{k}")
+
+    #=========================================================================================================================
+    #  Define Objective Function
+    #=========================================================================================================================
+
+    """
+    The objective is to minimize the total cost, which includes:
+    - Truck transportation costs.
+    - Barge fixed costs when departing from depots.
+    - Barge travel times (assuming cost proportional to time).
+    - Penalties for visiting sea terminals unnecessarily.
+    """
+    model.setObjective(
+        quicksum(f_ck[c, 'T'] * HT[Wc[c]] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
+        quicksum(
+            x_ijk[k][(i, j)] * (HBk[k] if i in [node.id for node in nodes.values() if node.type == 'depot'] else 0)
+            for k in KB for (i, j) in x_ijk[k]
+        ) +  # Barge fixed costs: Applied only when departing from depots
+        quicksum(
+            Tij[i, j] * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k]
+        ) +  # Barge travel time costs: Sum of travel times for all traversed arcs by barges
+        quicksum(
+            gamma * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k] if nodes[j].type == 'terminal'
+        ),  # Penalty for visiting sea terminals
+        GRB.MINIMIZE
+    )
+
+    #=========================================================================================================================
+    #  Define Constraints
+    #=========================================================================================================================
+
+    # (1) Each container is allocated to exactly one barge or truck
+    for c in C:
+        model.addConstr(
+            quicksum(f_ck[c, k] for k in K) == 1,
+            name=f"Assignment_{c}"
+        )
+        # Explanation:
+        # Ensures that each container is assigned to one and only one vehicle (either a barge or a truck)
+
+    # (2) Flow conservation for x_ijk (Barge Routes)
+    for k in KB:
+        # Identify depots
+        depots = [node.id for node in nodes.values() if node.type == 'depot']
+        for depot in depots:
+            # Each barge can depart from a depot to at most one outgoing arc
+            model.addConstr(
+                quicksum(x_ijk[k][(depot, j)] for j in N if j != depot and (depot, j) in x_ijk[k]) <= 1,
+                name=f"Depart_{k}_{depot}"
+            )
+        for i in N:
+            if i not in depots:
+                # For non-depot nodes, ensure flow conservation
+                model.addConstr(
+                    quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in x_ijk[k]) -
+                    quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in x_ijk[k]) == 0,
+                    name=f"Flow_{i}_{k}"
+                )
+                # Explanation:
+                # Ensures that barges entering a node also leave it, maintaining a continuous route
+
+    # (3) Import quantities loaded by barge k at sea terminal j
+    for k in KB:
+        for j in N:
+            if nodes[j].type == 'terminal':
+                model.addConstr(
+                    p_jk[j, k] == quicksum(
+                        Wc[c] * Zcj.get((c, j), 0) * f_ck[c, k]
+                        for c in I
+                    ),
+                    name=f"Import_{j}_{k}"
+                )
+                # Explanation:
+                # Defines the total import quantity loaded by barge k at terminal j
+                # Sum of sizes of all import containers assigned to barge k originating from j
+
+    # (4) Export quantities unloaded by barge k at sea terminal j
+    for k in KB:
+        for j in N:
+            if nodes[j].type == 'terminal':
+                model.addConstr(
+                    d_jk[j, k] == quicksum(
+                        Wc[c] * Zcj.get((c, j), 0) * f_ck[c, k]
+                        for c in E
+                    ),
+                    name=f"Export_{j}_{k}"
+                )
+                # Explanation:
+                # Defines the total export quantity unloaded by barge k at terminal j
+                # Sum of sizes of all export containers assigned to barge k destined to j
+
+    # (5) Flow equations for y_ijk (import containers)
+    for k in KB:
+        for j in N:
+            if nodes[j].type == 'terminal':
+                inflow = quicksum(y_ijk[k][(j, i)] for i in N if i != j and (j, i) in y_ijk[k])
+                outflow = quicksum(y_ijk[k][(i, j)] for i in N if i != j and (i, j) in y_ijk[k])
+                model.addConstr(
+                    inflow - outflow == p_jk[j, k],
+                    name=f"ImportFlow_{j}_{k}"
+                )
+                # Explanation:
+                # Ensures that the net inflow of import containers at terminal j by barge k equals the total imports loaded
+
+    # (6) Flow equations for z_ijk (export containers)
+    for k in KB:
+        for j in N:
+            if nodes[j].type == 'terminal':
+                inflow = quicksum(z_ijk[k][(i, j)] for i in N if i != j and (i, j) in z_ijk[k])
+                outflow = quicksum(z_ijk[k][(j, i)] for i in N if i != j and (j, i) in z_ijk[k])
+                model.addConstr(
+                    inflow - outflow == d_jk[j, k],
+                    name=f"ExportFlow_{j}_{k}"
+                )
+                # Explanation:
+                # Ensures that the net inflow of export containers at terminal j by barge k equals the total exports unloaded
+
+    # (7) Capacity constraints for barges on each arc
+    for k in KB:
+        for (i, j) in x_ijk[k]:
+            model.addConstr(
+                y_ijk[k][(i, j)] + z_ijk[k][(i, j)] <= Qk[k] * x_ijk[k][(i, j)],
+                name=f"Capacity_{i}_{j}_{k}"
+            )
+            # Explanation:
+            # The total containers (imports + exports) transported over arc (i, j) by barge k cannot exceed its capacity Qk[k]
+            # If barge k does not traverse arc (i, j), x_ijk[k][(i, j)] = 0, enforcing y_ijk + z_ijk <= 0
+
+    # (8) Barge departure time after release of export containers
+    for c in E:
+        for k in KB:
+            if c in Rc:
+                depot = containers[c].origin
+                model.addConstr(
+                    t_jk[depot, k] >= Rc[c] * f_ck[c, k],
+                    name=f"BargeDeparture_{c}_{k}"
+                )
+                # Explanation:
+                # If container c is assigned to barge k, ensure that barge k departs from the depot no earlier than the container's release date Rc[c]
+                # If f_ck[c, k] = 0, the constraint becomes t_jk >= 0, which is always true
+
+    # (9) Time calculation constraints linking arrival times at consecutive nodes
+    for k in KB:
+        for (i, j) in x_ijk[k]:
+            # Calculate handling time based on number of containers at node i assigned to barge k
+            handling_time = L * quicksum(
+                Zcj.get((c, i), 0) * f_ck[c, k] for c in C
+            )
+            model.addConstr(
+                t_jk[j, k] >= t_jk[i, k] + handling_time + Tij[i, j] - (1 - x_ijk[k][(i, j)]) * M,
+                name=f"TimeLower_{i}_{j}_{k}"
+            )
+            model.addConstr(
+                t_jk[j, k] <= t_jk[i, k] + handling_time + Tij[i, j] + (1 - x_ijk[k][(i, j)]) * M,
+                name=f"TimeUpper_{i}_{j}_{k}"
+            )
+            # Explanation:
+            # These constraints ensure that if barge k traverses arc (i, j), the arrival time at node j is correctly calculated
+            # based on departure time from node i, handling time, and travel time.
+            # The Big M terms effectively deactivate the constraints if x_ijk[k][(i, j)] = 0
+
+    # (10) Time windows at sea terminals for container operations
+    for c in C:
+        for k in KB:
+            for j in N:
+                if nodes[j].type == 'terminal' and Zcj.get((c, j), 0) == 1:
+                    # Opening time constraint
+                    model.addConstr(
+                        t_jk[j, k] >= Oc[c] - (1 - f_ck[c, k]) * M,
+                        name=f"TimeWindowOpen_{c}_{j}_{k}"
+                    )
+                    # Closing time constraint
+                    model.addConstr(
+                        t_jk[j, k] <= Dc[c] + (1 - f_ck[c, k]) * M,
+                        name=f"TimeWindowClose_{c}_{j}_{k}"
+                    )
+                    # Explanation:
+                    # If container c is assigned to barge k and is associated with terminal j,
+                    # ensure that arrival time at j is within the container's opening and closing dates.
+                    # The Big M terms deactivate the constraints if the container is not assigned to the barge.
+
+
+    # (Added_1) Add total time constraint for barges
+
+    for k in KB:  # Loop through all barges
+        model.addConstr(
+            quicksum(arc.travel_time * x_ijk[k][(arc.origin, arc.destination)] for arc in arcs) <= T_max[k],
+            name=f"TotalTime_{k}"
+        )
+
+    # (Added_2) Add total time constraint for trucks
+    for k in T_max_trucks.keys():
+        model.addConstr(
+            quicksum(
+                Tij[containers[c].origin, containers[c].destination] * f_ck[c, k]
+                for c in C
+            ) <= T_max_trucks[k],
+            name=f"TotalTime_Truck_{k}"
+        )
+
+    #=========================================================================================================================
+    #  Optimize the Model
+    #=========================================================================================================================
+
+    # Update the model with all variables and constraints
+    model.update()
+
+    # Set Gurobi parameters
+    model.setParam('OutputFlag', True)    # Enable solver output
+    model.setParam('TimeLimit', 300)      # Set a time limit of 5 minutes (300 seconds)
+
+    # Start the optimization process
+    model.optimize()
+
+    # Check the status of the model to ensure feasibility and optimality
+    check_model_status(model)
+
+    #=========================================================================================================================
+    #  Extract Variable Values
+    #=========================================================================================================================
+
+    # Extract values for f_ck variables (container allocations)
+    f_ck_values = {}
+    for key, var in f_ck.items():
+        f_ck_values[key] = var  # Store the Gurobi variable object for later access (e.g., var.X)
+
+    # Extract values for x_ijk variables (barge route selections)
+    x_ijk_values = {}
+    for k in KB:
+        x_ijk_values[k] = {}
+        for key, var in x_ijk[k].items():
+            x_ijk_values[k][key] = var  # Store the Gurobi variable object
+
+    # Extract values for t_jk variables (arrival times at nodes)
+    t_jk_values = {}
+    for key, var in t_jk.items():
+        t_jk_values[key] = var.X  # Store the optimized value
+
+    # Collect variables into a dictionary for ease of access
+    variables = {
+        'f_ck': f_ck_values,
+        'x_ijk': x_ijk_values,
+        't_jk': t_jk_values
+    }
+
+    #=========================================================================================================================
+    #  Output Results and Visualization
+    #=========================================================================================================================
+
+    # Print the optimization results: objective value, container allocations, and barge routes
+    print_model_result(model, variables, barges, containers)
+
+    # Visualize the barge and truck routes on a map
+    visualize_routes(nodes, barges, variables, containers, node_coords)
+
+    # Visualize the schedule in gantt chart format of container movements
+    visualize_schedule(nodes, barges, variables, containers)
+
+
+#=============================================================================================================================
+#  Run the Program
+#=============================================================================================================================
+
+if __name__ == '__main__':
+    nodes, arcs, containers, barges, truck, HT, node_coords = construct_network()
+    barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords)
+

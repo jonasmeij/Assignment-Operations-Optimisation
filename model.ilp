@@ -1,0 +1,65 @@
+\ Model SplitVRPSDP_copy
+\ LP format - for model browsing. Use MPS format to capture full model detail.
+\ Signature: 0x2674f27a9b5a0393
+Minimize
+ 
+Subject To
+ assign_c1: f[c1,b1] + f[c1,b2] = 1
+ import_demand_t0_b1: p[t0,b1] = 0
+ import_demand_t1_b1: - f[c1,b1] + p[t1,b1] = 0
+ import_demand_t2_b1: - 2 f[c2,b1] + p[t2,b1] = 0
+ import_demand_t3_b1: p[t3,b1] = 0
+ import_demand_t0_b2: p[t0,b2] = 0
+ import_demand_t1_b2: - f[c1,b2] + p[t1,b2] = 0
+ import_demand_t2_b2: - 2 f[c2,b2] + p[t2,b2] = 0
+ import_demand_t3_b2: p[t3,b2] = 0
+ import_flow_balance_t0_b1: - y[t0,t1,b1] + y[t3,t0,b1] - y[t0,t2,b1]
+   + y[t2,t0,b1] + y[t1,t0,b1] - p[t0,b1] = 0
+ import_flow_balance_t1_b1: y[t0,t1,b1] - y[t1,t2,b1] - y[t1,t3,b1]
+   + y[t3,t1,b1] + y[t2,t1,b1] - y[t1,t0,b1] - p[t1,b1] = 0
+ import_flow_balance_t2_b1: y[t1,t2,b1] - y[t2,t3,b1] + y[t0,t2,b1]
+   - y[t2,t0,b1] - y[t2,t1,b1] + y[t3,t2,b1] - p[t2,b1] = 0
+ import_flow_balance_t3_b1: y[t2,t3,b1] - y[t3,t0,b1] + y[t1,t3,b1]
+   - y[t3,t1,b1] - y[t3,t2,b1] - p[t3,b1] = 0
+ import_flow_balance_t0_b2: - y[t0,t1,b2] + y[t3,t0,b2] - y[t0,t2,b2]
+   + y[t2,t0,b2] + y[t1,t0,b2] - p[t0,b2] = 0
+ import_flow_balance_t1_b2: y[t0,t1,b2] - y[t1,t2,b2] - y[t1,t3,b2]
+   + y[t3,t1,b2] + y[t2,t1,b2] - y[t1,t0,b2] - p[t1,b2] = 0
+ import_flow_balance_t2_b2: y[t1,t2,b2] - y[t2,t3,b2] + y[t0,t2,b2]
+   - y[t2,t0,b2] - y[t2,t1,b2] + y[t3,t2,b2] - p[t2,b2] = 0
+ import_flow_balance_t3_b2: y[t2,t3,b2] - y[t3,t0,b2] + y[t1,t3,b2]
+   - y[t3,t1,b2] - y[t3,t2,b2] - p[t3,b2] = 0
+Bounds
+ y[t0,t1,b1] free
+ y[t0,t1,b2] free
+ y[t1,t2,b1] free
+ y[t1,t2,b2] free
+ y[t2,t3,b1] free
+ y[t2,t3,b2] free
+ y[t3,t0,b1] free
+ y[t3,t0,b2] free
+ y[t0,t2,b1] free
+ y[t0,t2,b2] free
+ y[t1,t3,b1] free
+ y[t1,t3,b2] free
+ y[t2,t0,b1] free
+ y[t2,t0,b2] free
+ y[t3,t1,b1] free
+ y[t3,t1,b2] free
+ y[t2,t1,b1] free
+ y[t2,t1,b2] free
+ y[t1,t0,b1] free
+ y[t1,t0,b2] free
+ y[t3,t2,b1] free
+ y[t3,t2,b2] free
+ p[t0,b1] free
+ p[t0,b2] free
+ p[t1,b1] free
+ p[t1,b2] free
+ p[t2,b1] free
+ p[t2,b2] free
+ p[t3,b1] free
+ p[t3,b2] free
+Binaries
+ f[c1,b1] f[c1,b2] f[c2,b1] f[c2,b2]
+End
