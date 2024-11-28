@@ -216,26 +216,15 @@ def visualize_schedule(nodes, barges, variables, containers):
 
         # Add scheduling details to barge data
         for (i, j) in route:
-            # **Unload** containers at node i whose destination is i
-            for c in containers.values():
-                if f_ck[c.id, k].X > 0.5 and c.destination == i:
-                    if c.id in onboard_containers:
-                        onboard_containers.discard(c.id)
-
-            # **Load** containers at node i whose origin is i
-            for c in containers.values():
-                if f_ck[c.id, k].X > 0.5 and c.origin == i:
-                    onboard_containers.add(c.id)
-
             # **Unload** containers at node j whose destination is j
             for c in containers.values():
                 if f_ck[c.id, k].X > 0.5 and c.destination == j:
                     if c.id in onboard_containers:
                         onboard_containers.discard(c.id)
 
-            # **Load** containers at node j whose origin is j
+            # **Load** containers at node i whose origin is i
             for c in containers.values():
-                if f_ck[c.id, k].X > 0.5 and c.origin == j:
+                if f_ck[c.id, k].X > 0.5 and c.origin == i:
                     onboard_containers.add(c.id)
 
             # Build the task description
@@ -314,4 +303,5 @@ def visualize_schedule(nodes, barges, variables, containers):
     # Enhance layout
     plt.tight_layout()
     plt.show()
+
 

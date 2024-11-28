@@ -136,7 +136,7 @@ def construct_network():
               for barge_id, capacity, fixed_cost in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 2000,2: 2000}
+    HT = {1: 2000}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
@@ -221,7 +221,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 1000  # A large constant used in Big M method for conditional constraints
+    M = 100  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -311,7 +311,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     - Penalties for visiting sea terminals unnecessarily.
     """
     model.setObjective(
-        quicksum(f_ck[c, 'T'] * HT[Wc[c]] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
+        quicksum(f_ck[c, 'T'] * HT[1] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
         quicksum(
             x_ijk[k][(i, j)] * (HBk[k] if i in [node.id for node in nodes.values() if node.type == 'depot'] else 0)
             for k in KB for (i, j) in x_ijk[k]
@@ -439,48 +439,43 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                 # If container c is assigned to barge k, ensure that barge k departs from the depot no earlier than the container's release date Rc[c]
                 # If f_ck[c, k] = 0, the constraint becomes t_jk >= 0, which is always true
 
-    # (9) Time calculation constraints linking arrival times at consecutive nodes
     for k in KB:
-        for (i, j) in x_ijk[k]:
-            # Calculate handling time based on number of containers at node i assigned to barge k
-            handling_time = L * quicksum(
-                Zcj.get((c, i), 0) * f_ck[c, k] for c in C
-            )
-            model.addConstr(
-                t_jk[j, k] >= t_jk[i, k] + handling_time + Tij[i, j] - (1 - x_ijk[k][(i, j)]) * M,
-                name=f"TimeLower_{i}_{j}_{k}"
-            )
-            model.addConstr(
-                t_jk[j, k] <= t_jk[i, k] + handling_time + Tij[i, j] + (1 - x_ijk[k][(i, j)]) * M,
-                name=f"TimeUpper_{i}_{j}_{k}"
-            )
-            # Explanation:
-            # These constraints ensure that if barge k traverses arc (i, j), the arrival time at node j is correctly calculated
-            # based on departure time from node i, handling time, and travel time.
-            # The Big M terms effectively deactivate the constraints if x_ijk[k][(i, j)] = 0
-
-    # (10) Time windows at sea terminals for container operations
-    for c in C:
-        for k in KB:
+        for i in N:
             for j in N:
-                if nodes[j].type == 'terminal' and Zcj.get((c, j), 0) == 1:
-                    # Opening time constraint
+                if i != j and (i, j) in Tij:
                     model.addConstr(
-                        t_jk[j, k] >= Oc[c] - (1 - f_ck[c, k]) * M,
-                        name=f"TimeWindowOpen_{c}_{j}_{k}"
+                        t_jk[j, k] >= t_jk[i, k] + quicksum(L * Zcj.get((c, i), 0) * f_ck[c, k] for c in C) + Tij[
+                            i, j] - (1 - x_ijk[k][(i, j)]) * M,
+                        name=f"TimeLB_{i}_{j}_{k}"
                     )
-                    # Closing time constraint
+
+    for k in KB:
+        for i in N:
+            for j in N:
+                if i != j and (i, j) in Tij:
                     model.addConstr(
-                        t_jk[j, k] <= Dc[c] + (1 - f_ck[c, k]) * M,
-                        name=f"TimeWindowClose_{c}_{j}_{k}"
+                        t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj.get((c, i), 0) * f_ck[c, k] for c in C) + Tij[
+                            i, j] + (1 - x_ijk[k][(i, j)]) * M,
+                        name=f"TimeUB_{i}_{j}_{k}"
                     )
-                    # Explanation:
-                    # If container c is assigned to barge k and is associated with terminal j,
-                    # ensure that arrival time at j is within the container's opening and closing dates.
-                    # The Big M terms deactivate the constraints if the container is not assigned to the barge.
 
+    for c in C:
+        for j in N:
+            if j != 0:  # Exclude depot
+                for k in KB:
+                    model.addConstr(
+                        t_jk[j, k] >= Oc[c] * Zcj.get((c, j), 0) - (1 - f_ck[c, k]) * M,
+                        name=f"ReleaseTime_{c}_{j}_{k}"
+                    )
 
- 
+    for c in C:
+        for j in N:
+            if j != 0:  # Exclude depot
+                for k in KB:
+                    model.addConstr(
+                        t_jk[j, k] * Zcj.get((c, j), 0) <= Dc[c] + (1 - f_ck[c, k]) * M,
+                        name=f"ClosingTime_{c}_{j}_{k}"
+                    )
 
     #=========================================================================================================================
     #  Optimize the Model
