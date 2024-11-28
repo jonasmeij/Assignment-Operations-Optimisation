@@ -66,19 +66,19 @@ def construct_network():
     """
     # Define nodes with their types
     nodes = {
-        0: Node(0, 'depot'),       # Depot 1
-        1: Node(1, 'depot'),       # Depot 2
-        2: Node(2, 'terminal'),    # Terminal 1
-        3: Node(3, 'terminal'),    # Terminal 2
-        4: Node(4, 'terminal'),    # Terminal 3
-        5: Node(5, 'terminal'),    # Terminal 4
-        6: Node(6, 'terminal'),    # Terminal 5
+        0: Node(0, 'depot'),  # Depot 1
+        1: Node(1, 'depot'),  # Depot 2
+        2: Node(2, 'terminal'),  # Terminal 1
+        3: Node(3, 'terminal'),  # Terminal 2
+        4: Node(4, 'terminal'),  # Terminal 3
+        5: Node(5, 'terminal'),  # Terminal 4
+        6: Node(6, 'terminal'),  # Terminal 5
     }
 
     # Define coordinates for each node (latitude, longitude)
     node_coords = {
-        0: (51.957979, 4.052421),  # Depot 1
-        1: (51.912345, 4.234567),  # Depot 2 (example coordinates)
+        0: (51.957979, 4.052421),  # Depot 0
+        1: (51.912345, 4.234567),  # Depot 1
         2: (51.948060, 4.063992),  # Terminal 1
         3: (51.955480, 4.052490),  # Terminal 2
         4: (51.961111, 4.034722),  # Terminal 3
@@ -89,21 +89,20 @@ def construct_network():
     # Define containers with their attributes
     containers_data = [
         # container_id, size, release_date, opening_date, closing_date, origin, destination, container_type
-        (1, 1, 2, 5, 12, 0, 2, 'E'),  # From Depot 0 to Terminal 2
-        (2, 2, 4, 6, 10, 1, 3, 'E'),  # From Depot 1 to Terminal 3
-        (3, 1, 1, 4, 8, 0, 4, 'E'),   # From Depot 0 to Terminal 4
-        (4, 2, 3, 7, 9, 1, 5, 'E'),   # From Depot 1 to Terminal 5
-        (5, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 6
-        (6, 2, 6, 10, 14, 1, 2, 'E'), # From Depot 1 to Terminal 2
+        (1, 1, 2, 5, 12, 0, 2, 'E'),  # From Depot 0 to Terminal 1
+        (2, 2, 4, 6, 10, 1, 3, 'E'),  # From Depot 1 to Terminal 2
+        (3, 1, 1, 4, 8, 0, 4, 'E'),  # From Depot 0 to Terminal 3
+        (4, 2, 3, 7, 9, 1, 5, 'E'),  # From Depot 1 to Terminal 4
+        (5, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 5
+        (6, 2, 6, 10, 14, 1, 2, 'E'),  # From Depot 1 to Terminal 1
         # Import Containers (from Terminals to Depots)
-        (7, 1, None, 3, 9, 2, 0, 'I'),  # From Terminal 2 to Depot 0
-        (8, 2, None, 2, 7, 3, 1, 'I'),  # From Terminal 3 to Depot 1
-        (9, 1, None, 5, 11, 4, 0, 'I'), # From Terminal 4 to Depot 0
-        (10,2, None, 6, 12, 5, 1, 'I'), # From Terminal 5 to Depot 1
-        (11,1, None, 8, 14, 6, 0, 'I'), # From Terminal 6 to Depot 0
-        (12,2, None, 9, 15, 2, 1, 'I'), # From Terminal 2 to Depot 1
+        (7, 1, None, 3, 9, 2, 0, 'I'),  # From Terminal 1 to Depot 0
+        (8, 2, None, 2, 7, 3, 1, 'I'),  # From Terminal 2 to Depot 1
+        (9, 1, None, 5, 11, 4, 0, 'I'),  # From Terminal 3 to Depot 0
+        (10, 2, None, 6, 12, 5, 1, 'I'),  # From Terminal 4 to Depot 1
+        (11, 1, None, 8, 14, 6, 0, 'I'),  # From Terminal 5 to Depot 0
+        (12, 2, None, 9, 15, 2, 1, 'I'),  # From Terminal 1 to Depot 1
     ]
-
     # Initialize containers dictionary
     containers = {}
     for data in containers_data:
@@ -137,7 +136,7 @@ def construct_network():
               for barge_id, capacity, fixed_cost in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 1500, 2: 1500}  # Truck 1 costs 500 per container, Truck 2 costs 800
+    HT = {1: 2000,2: 2000}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
@@ -237,9 +236,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     Rc = {c.id: c.release_date for c in containers.values() if c.type == 'E'}  # Rc: Release dates for export containers
     Oc = {c.id: c.opening_date for c in containers.values()}  # Oc: Opening dates for all containers
     Dc = {c.id: c.closing_date for c in containers.values()}  # Dc: Closing dates for all containers
-
-    T_max = {k: 500 for k in KB}  #All barges have a max time of 500 minutes
-    T_max_trucks = {1: 300, 2: 400}  # Max times for trucks
 
     # Zcj: Indicator if container c is associated with node j
     Zcj = {}
@@ -484,23 +480,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                     # The Big M terms deactivate the constraints if the container is not assigned to the barge.
 
 
-    # (Added_1) Add total time constraint for barges
-
-    for k in KB:  # Loop through all barges
-        model.addConstr(
-            quicksum(arc.travel_time * x_ijk[k][(arc.origin, arc.destination)] for arc in arcs) <= T_max[k],
-            name=f"TotalTime_{k}"
-        )
-
-    # (Added_2) Add total time constraint for trucks
-    for k in T_max_trucks.keys():
-        model.addConstr(
-            quicksum(
-                Tij[containers[c].origin, containers[c].destination] * f_ck[c, k]
-                for c in C
-            ) <= T_max_trucks[k],
-            name=f"TotalTime_Truck_{k}"
-        )
+ 
 
     #=========================================================================================================================
     #  Optimize the Model
