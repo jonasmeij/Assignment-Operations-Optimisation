@@ -1,10 +1,7 @@
 
 def visualize_routes(nodes, barges, variables, containers, node_coords):
-    import folium
-    from geopy.distance import geodesic
     from pyproj import Geod
     import folium
-    from folium.plugins import BeautifyIcon
 
     x_ijk = variables['x_ijk']
     f_ck = variables['f_ck']

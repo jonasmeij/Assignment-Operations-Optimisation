@@ -221,7 +221,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 10000  # A large constant used in Big M method for conditional constraints
+    M = 1000  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -526,6 +526,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         'x_ijk': x_ijk_values,
         't_jk': t_jk_values
     }
+
+    print(x_ijk_values)
 
     #=========================================================================================================================
     #  Output Results and Visualization
