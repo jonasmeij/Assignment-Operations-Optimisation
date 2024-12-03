@@ -221,7 +221,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 100  # A large constant used in Big M method for conditional constraints
+    M = 10000  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -240,10 +240,13 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     # Zcj: Indicator if container c is associated with node j
     Zcj = {}
     for c in containers.values():
-        if c.type == 'E':
-            Zcj[c.id, c.destination] = 1  # Export containers are associated with their destination
-        else:
-            Zcj[c.id, c.origin] = 1      # Import containers are associated with their origin
+        for j in N:
+            if c.origin == j:
+                Zcj[c.id,j] = 1
+            elif c.destination == j:
+                Zcj[c.id,j] = 1
+            else:
+                Zcj[c.id,j] = 0
 
     HBk = {k: barges[k].fixed_cost for k in barges.keys()}  # HBk: Fixed costs for each barge
     Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
@@ -277,8 +280,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     d_jk = {}
     for k in KB:
         for j in N:
-            p_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"p_{j}_{k}")
-            d_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"d_{j}_{k}")
+            p_jk[j, k] = model.addVar(vtype=GRB.INTEGER, lb=0, name=f"p_{j}_{k}")
+            d_jk[j, k] = model.addVar(vtype=GRB.INTEGER, lb=0, name=f"d_{j}_{k}")
 
     # y_ijk: Continuous variable for import containers on arc (i, j) by barge k
     # z_ijk: Continuous variable for export containers on arc (i, j) by barge k
@@ -312,18 +315,13 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     """
     model.setObjective(
         quicksum(f_ck[c, 'T'] * HT[1] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
-        quicksum(
-            x_ijk[k][(i, j)] * (HBk[k] if i in [node.id for node in nodes.values() if node.type == 'depot'] else 0)
-            for k in KB for (i, j) in x_ijk[k]
-        ) +  # Barge fixed costs: Applied only when departing from depots
-        quicksum(
-            Tij[i, j] * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k]
-        ) +  # Barge travel time costs: Sum of travel times for all traversed arcs by barges
-        quicksum(
-            gamma * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k] if nodes[j].type == 'terminal'
-        ),  # Penalty for visiting sea terminals
-        GRB.MINIMIZE
-    )
+
+        quicksum(x_ijk[k][0,j] * HBk[k] for k in KB for j in N if nodes[j].type == 'terminal')
+        +  # Barge fixed costs: Applied only when departing from depots
+        quicksum(Tij[i,j] * x_ijk[k][(i,j)] for k in KB for j in N for i in N if i!=j)
+        + # Barge travel time costs: Sum of travel times for all traversed arcs by barges
+        quicksum(gamma * x_ijk[k][(i, j)] for k in KB for i in N for j in N if i!=j and nodes[i].type == "terminal"),  # Penalty for visiting sea terminals
+        GRB.MINIMIZE)
 
     #=========================================================================================================================
     #  Define Constraints
@@ -340,69 +338,45 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     # (2) Flow conservation for x_ijk (Barge Routes)
     for k in KB:
-        # Identify depots
-        depots = [node.id for node in nodes.values() if node.type == 'depot']
-        for depot in depots:
-            # Each barge can depart from a depot to at most one outgoing arc
-            model.addConstr(
-                quicksum(x_ijk[k][(depot, j)] for j in N if j != depot and (depot, j) in x_ijk[k]) <= 1,
-                name=f"Depart_{k}_{depot}"
-            )
         for i in N:
-            if i not in depots:
-                # For non-depot nodes, ensure flow conservation
-                model.addConstr(
-                    quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in x_ijk[k]) -
-                    quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in x_ijk[k]) == 0,
-                    name=f"Flow_{i}_{k}"
-                )
-                # Explanation:
-                # Ensures that barges entering a node also leave it, maintaining a continuous route
+            model.addConstr(
+                (quicksum(x_ijk[k][(i,j)] for j in N if j != i) -
 
-    # (3) Import quantities loaded by barge k at sea terminal j
+            quicksum(x_ijk[k][(j,i)] for j in N if j!= i))
+            == 0, name =f"Flow_consvervation_{k}_{i}")
+
+    # (3) each barge is used at most once
+    for k in KB:
+        model.addConstr(
+            quicksum(x_ijk[k][(0,j)] for j in N if nodes[j].type == "terminal") <= 1,
+            name=f"Barge_used_{k}"
+        )
+
+    # (4) Import quantities loaded by barge k at sea terminal j
     for k in KB:
         for j in N:
-            if nodes[j].type == 'terminal':
-                model.addConstr(
-                    p_jk[j, k] == quicksum(
-                        Wc[c] * Zcj.get((c, j), 0) * f_ck[c, k]
-                        for c in I
-                    ),
-                    name=f"Import_{j}_{k}"
-                )
-                # Explanation:
-                # Defines the total import quantity loaded by barge k at terminal j
-                # Sum of sizes of all import containers assigned to barge k originating from j
+            if nodes[j].type == "terminal":
+                model.addConstr(p_jk[j,k] == quicksum(Wc[c] * Zcj[c, j] * f_ck[c, k] for c in I),
+                                name = f"import_quantities_{j}_{k}")
 
-    # (4) Export quantities unloaded by barge k at sea terminal j
+    # (5) Export quantitites loadded by barge k at sea termina j
     for k in KB:
         for j in N:
-            if nodes[j].type == 'terminal':
-                model.addConstr(
-                    d_jk[j, k] == quicksum(
-                        Wc[c] * Zcj.get((c, j), 0) * f_ck[c, k]
-                        for c in E
-                    ),
-                    name=f"Export_{j}_{k}"
-                )
-                # Explanation:
-                # Defines the total export quantity unloaded by barge k at terminal j
-                # Sum of sizes of all export containers assigned to barge k destined to j
+            if nodes[j].type == "terminal":
+                model.addConstr(d_jk[j,k] == quicksum(Wc[c] * Zcj[c, j] * f_ck[c, k] for c in E),
+                                name = f"Export_quantities_{j}_{k}")
 
-    # (5) Flow equations for y_ijk (import containers)
+    # (6) Flow equations for y_ijk (import containers)
     for k in KB:
         for j in N:
             if nodes[j].type == 'terminal':
                 inflow = quicksum(y_ijk[k][(j, i)] for i in N if i != j and (j, i) in y_ijk[k])
                 outflow = quicksum(y_ijk[k][(i, j)] for i in N if i != j and (i, j) in y_ijk[k])
-                model.addConstr(
-                    inflow - outflow == p_jk[j, k],
-                    name=f"ImportFlow_{j}_{k}"
-                )
+                model.addConstr(inflow - outflow == p_jk[j, k], name=f"ImportFlow_{j}_{k}")
                 # Explanation:
                 # Ensures that the net inflow of import containers at terminal j by barge k equals the total imports loaded
 
-    # (6) Flow equations for z_ijk (export containers)
+    # (7) Flow equations for z_ijk (export containers)
     for k in KB:
         for j in N:
             if nodes[j].type == 'terminal':
@@ -415,18 +389,23 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                 # Explanation:
                 # Ensures that the net inflow of export containers at terminal j by barge k equals the total exports unloaded
 
-    # (7) Capacity constraints for barges on each arc
-    for k in KB:
-        for (i, j) in x_ijk[k]:
-            model.addConstr(
-                y_ijk[k][(i, j)] + z_ijk[k][(i, j)] <= Qk[k] * x_ijk[k][(i, j)],
-                name=f"Capacity_{i}_{j}_{k}"
-            )
-            # Explanation:
-            # The total containers (imports + exports) transported over arc (i, j) by barge k cannot exceed its capacity Qk[k]
-            # If barge k does not traverse arc (i, j), x_ijk[k][(i, j)] = 0, enforcing y_ijk + z_ijk <= 0
+    # (8) Capacity constraints for barges on each arc
+    # for k in KB:
+    #     for (i, j) in x_ijk[k]:
+    #         model.addConstr([k][(i, j)] + z_ijk[k][(i, j)] <= Qk[k] * x_ijk[k][(i, j)],
+    #             name=f"Capacity_{i}_{j}_{k}"
+    #         # Explanation:
+    #         # The total containers (imports + exports) transported over arc (i, j) by barge k cannot exceed its capacity Qk[k]
+    #         # If barge k does not traverse arc (i, j), x_ijk[k][(i, j)] = 0, enforcing y_ijk + z_ijk <= 0
 
-    # (8) Barge departure time after release of export containers
+    # (8)
+    for k in KB:
+        for i in N:
+            for j in N:
+                if i!=j:
+                    model.addConstr(y_ijk[k][(i,j)] + z_ijk[k][(i,j)] <= Qk[k] * x_ijk[k][(i,j)], name=f"Capacity_{i}_{j}_{k}")
+
+    # (9) Barge departure time after release of export containers
     for c in E:
         for k in KB:
             if c in Rc:
@@ -438,42 +417,43 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                 # Explanation:
                 # If container c is assigned to barge k, ensure that barge k departs from the depot no earlier than the container's release date Rc[c]
                 # If f_ck[c, k] = 0, the constraint becomes t_jk >= 0, which is always true
-
+    # (10)
     for k in KB:
         for i in N:
             for j in N:
                 if i != j and (i, j) in Tij:
                     model.addConstr(
-                        t_jk[j, k] >= t_jk[i, k] + quicksum(L * Zcj.get((c, i), 0) * f_ck[c, k] for c in C) + Tij[
+                        t_jk[j, k] >= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[
                             i, j] - (1 - x_ijk[k][(i, j)]) * M,
                         name=f"TimeLB_{i}_{j}_{k}"
                     )
 
+    # (11)
     for k in KB:
         for i in N:
             for j in N:
                 if i != j and (i, j) in Tij:
                     model.addConstr(
-                        t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj.get((c, i), 0) * f_ck[c, k] for c in C) + Tij[
+                        t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[
                             i, j] + (1 - x_ijk[k][(i, j)]) * M,
                         name=f"TimeUB_{i}_{j}_{k}"
                     )
-
+    #(12)
     for c in C:
         for j in N:
-            if j != 0:  # Exclude depot
+            if nodes[j].type == 'terminal':  # Exclude depot
                 for k in KB:
                     model.addConstr(
-                        t_jk[j, k] >= Oc[c] * Zcj.get((c, j), 0) - (1 - f_ck[c, k]) * M,
+                        t_jk[j, k] >= Oc[c] * Zcj[c, j] - (1 - f_ck[c, k]) * M,
                         name=f"ReleaseTime_{c}_{j}_{k}"
                     )
-
+    #(13)
     for c in C:
         for j in N:
-            if j != 0:  # Exclude depot
+            if nodes[j].type == 'terminal':  # Exclude depot
                 for k in KB:
                     model.addConstr(
-                        t_jk[j, k] * Zcj.get((c, j), 0) <= Dc[c] + (1 - f_ck[c, k]) * M,
+                        t_jk[j, k] * Zcj[c, j] <= Dc[c] + (1 - f_ck[c, k]) * M,
                         name=f"ClosingTime_{c}_{j}_{k}"
                     )
 
