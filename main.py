@@ -221,7 +221,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 200  # A large constant used in Big M method for conditional constraints
+    M = 100  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -242,9 +242,9 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for c in containers.values():
         for j in N:
             if c.origin == j:
-                Zcj[c.id,c.origin] = 1
+                Zcj[c.id,j] = 1
             elif c.destination == j:
-                Zcj[c.id,c.destination] = 1
+                Zcj[c.id,j] = 1
             else:
                 Zcj[c.id,j] = 0
 
@@ -341,10 +341,11 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for k in KB:
         for i in N:
             model.addConstr(
-                (quicksum(x_ijk[k][(i,j)] for j in N if j != i) -
+                (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
 
-            quicksum(x_ijk[k][(j,i)] for j in N if j!= i))
-            == 0, name =f"Flow_consvervation_{k}_{i}")
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
+                    == 0, name=f"Flow_consvervation_{k}_{i}")
+
 
     # (3) each barge is used at most once
     for k in KB:
@@ -371,8 +372,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for k in KB:
         for j in N:
             if nodes[j].type == 'terminal':
-                inflow = quicksum(y_ijk[k][(j, i)] for i in N if i != j and (j, i) in y_ijk[k])
-                outflow = quicksum(y_ijk[k][(i, j)] for i in N if i != j and (i, j) in y_ijk[k])
+                inflow = quicksum(y_ijk[k][(j, i)] for i in N if i != j)
+                outflow = quicksum(y_ijk[k][(i, j)] for i in N if i != j)
                 model.addConstr(inflow - outflow == p_jk[j, k], name=f"ImportFlow_{j}_{k}")
                 # Explanation:
                 # Ensures that the net inflow of import containers at terminal j by barge k equals the total imports loaded
@@ -381,8 +382,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for k in KB:
         for j in N:
             if nodes[j].type == 'terminal':
-                inflow = quicksum(z_ijk[k][(i, j)] for i in N if i != j and (i, j) in z_ijk[k])
-                outflow = quicksum(z_ijk[k][(j, i)] for i in N if i != j and (j, i) in z_ijk[k])
+                inflow = quicksum(z_ijk[k][(i, j)] for i in N if i != j)
+                outflow = quicksum(z_ijk[k][(j, i)] for i in N if i != j)
                 model.addConstr(
                     inflow - outflow == d_jk[j, k],
                     name=f"ExportFlow_{j}_{k}"
@@ -409,25 +410,28 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                 # Explanation:
                 # If container c is assigned to barge k, ensure that barge k departs from the depot no earlier than the container's release date Rc[c]
                 # If f_ck[c, k] = 0, the constraint becomes t_jk >= 0, which is always true
+
+
+    #
     # (10)
     for k in KB:
         for i in N:
             for j in N:
                 if i != j:
-                    model.addConstr(
+                        model.addConstr(
                         t_jk[j, k] >= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] - (1 - x_ijk[k][(i, j)]) * M,
                         name=f"TimeLB_{i}_{j}_{k}"
                     )
 
-    # (11)
+    #(11)
     for k in KB:
         for i in N:
             for j in N:
                 if i != j:
                     model.addConstr(
-                        t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] + (1 - x_ijk[k][(i, j)]) * M,
-                        name=f"TimeUB_{i}_{j}_{k}"
-                    )
+                            t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] + (1 - x_ijk[k][(i, j)]) * M,
+                            name=f"TimeUB_{i}_{j}_{k}"
+                        )
     #(12)
     for c in C:
         for j in N:
@@ -462,7 +466,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model.optimize()
 
     # Check the status of the model to ensure feasibility and optimality
-    check_model_status(model)
+    # check_model_status(model)
 
     #=========================================================================================================================
     #  Extract Variable Values
