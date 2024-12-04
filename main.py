@@ -116,7 +116,7 @@ def construct_network():
         for j in nodes:
             if i != j:
                 distance = geodesic(node_coords[i], node_coords[j]).kilometers  # Calculate distance in km
-                travel_time = distance / 20 * 60  # Convert speed to travel time in minutes
+                travel_time = distance / 20   # Convert speed to travel time in hours
                 Tij[(i, j)] = travel_time
 
     # Create arcs based on calculated travel times
@@ -136,7 +136,7 @@ def construct_network():
               for barge_id, capacity, fixed_cost in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 2000}
+    HT = {1: 10000}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
@@ -221,7 +221,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 10000  # A large constant used in Big M method for conditional constraints
+    M = 200  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -242,9 +242,9 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for c in containers.values():
         for j in N:
             if c.origin == j:
-                Zcj[c.id,j] = 1
+                Zcj[c.id,c.origin] = 1
             elif c.destination == j:
-                Zcj[c.id,j] = 1
+                Zcj[c.id,c.destination] = 1
             else:
                 Zcj[c.id,j] = 0
 
@@ -252,7 +252,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
-    L = 0.5      # Handling time per container (e.g., loading/unloading time)
+    L = 0.05      # Handling time per container in hours (e.g., loading/unloading time)
     gamma = 50   # Penalty cost for visiting sea terminals unnecessarily
 
     #=========================================================================================================================
@@ -273,6 +273,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
             for j in N:
                 if i != j and (i, j) in Tij:
                     x_ijk[k][(i, j)] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{j}_{k}")
+
 
     # p_jk: Continuous variable representing import quantities loaded by barge k at terminal j
     # d_jk: Continuous variable representing export quantities unloaded by barge k at terminal j
@@ -316,9 +317,9 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model.setObjective(
         quicksum(f_ck[c, 'T'] * HT[1] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
 
-        quicksum(x_ijk[k][0,j] * HBk[k] for k in KB for j in N if nodes[j].type == 'terminal')
+        quicksum(x_ijk[k][i,j] * HBk[k] for k in KB for j in N for i in N if nodes[j].type == 'terminal' and nodes[i].type =="depot")
         +  # Barge fixed costs: Applied only when departing from depots
-        quicksum(Tij[i,j] * x_ijk[k][(i,j)] for k in KB for j in N for i in N if i!=j)
+        quicksum(Tij[(i, j)] * x_ijk[k][(i,j)] for k in KB for j in N for i in N if i!=j)
         + # Barge travel time costs: Sum of travel times for all traversed arcs by barges
         quicksum(gamma * x_ijk[k][(i, j)] for k in KB for i in N for j in N if i!=j and nodes[i].type == "terminal"),  # Penalty for visiting sea terminals
         GRB.MINIMIZE)
@@ -389,15 +390,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                 # Explanation:
                 # Ensures that the net inflow of export containers at terminal j by barge k equals the total exports unloaded
 
-    # (8) Capacity constraints for barges on each arc
-    # for k in KB:
-    #     for (i, j) in x_ijk[k]:
-    #         model.addConstr([k][(i, j)] + z_ijk[k][(i, j)] <= Qk[k] * x_ijk[k][(i, j)],
-    #             name=f"Capacity_{i}_{j}_{k}"
-    #         # Explanation:
-    #         # The total containers (imports + exports) transported over arc (i, j) by barge k cannot exceed its capacity Qk[k]
-    #         # If barge k does not traverse arc (i, j), x_ijk[k][(i, j)] = 0, enforcing y_ijk + z_ijk <= 0
-
     # (8)
     for k in KB:
         for i in N:
@@ -421,10 +413,9 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for k in KB:
         for i in N:
             for j in N:
-                if i != j and (i, j) in Tij:
+                if i != j:
                     model.addConstr(
-                        t_jk[j, k] >= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[
-                            i, j] - (1 - x_ijk[k][(i, j)]) * M,
+                        t_jk[j, k] >= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] - (1 - x_ijk[k][(i, j)]) * M,
                         name=f"TimeLB_{i}_{j}_{k}"
                     )
 
@@ -432,10 +423,9 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for k in KB:
         for i in N:
             for j in N:
-                if i != j and (i, j) in Tij:
+                if i != j:
                     model.addConstr(
-                        t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[
-                            i, j] + (1 - x_ijk[k][(i, j)]) * M,
+                        t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] + (1 - x_ijk[k][(i, j)]) * M,
                         name=f"TimeUB_{i}_{j}_{k}"
                     )
     #(12)
@@ -466,7 +456,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     # Set Gurobi parameters
     model.setParam('OutputFlag', True)    # Enable solver output
-    model.setParam('TimeLimit', 300)      # Set a time limit of 5 minutes (300 seconds)
+    model.setParam('TimeLimit', 30)      # Set a time limit of 5 minutes (300 seconds)
 
     # Start the optimization process
     model.optimize()
