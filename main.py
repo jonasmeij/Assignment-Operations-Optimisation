@@ -141,7 +141,7 @@ def construct_network():
               for barge_id, capacity, fixed_cost in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 10000}
+    HT = {1: 2000}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
@@ -226,7 +226,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 100  # A large constant used in Big M method for conditional constraints
+    M = 1000  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -257,8 +257,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
-    L = 0.05      # Handling time per container in hours (e.g., loading/unloading time)
-    gamma = 50   # Penalty cost for visiting sea terminals unnecessarily
+    L = 0.5      # Handling time per container in hours (e.g., loading/unloading time)
+    gamma = 20 # Penalty cost for visiting sea terminals
 
     #=========================================================================================================================
     #  Define Decision Variables
