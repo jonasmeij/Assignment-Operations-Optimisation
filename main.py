@@ -350,7 +350,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     # (3) each barge is used at most once
     for k in KB:
         model.addConstr(
-            quicksum(x_ijk[k][(0,j)] for j in N if nodes[j].type == "terminal") <= 1,
+            quicksum(x_ijk[k][(i,j)] for j in N for i in N if nodes[j].type == "terminal" and nodes[i].type == "depot") <= 1,
             name=f"Barge_used_{k}"
         )
 
@@ -429,9 +429,9 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
             for j in N:
                 if i != j:
                     model.addConstr(
-                            t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] + (1 - x_ijk[k][(i, j)]) * M,
-                            name=f"TimeUB_{i}_{j}_{k}"
-                        )
+                                t_jk[j, k] <= t_jk[i, k] + quicksum(L * Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] + (1 - x_ijk[k][(i, j)]) * M,
+                                name=f"TimeUB_{i}_{j}_{k}"
+                            )
     #(12)
     for c in C:
         for j in N:
