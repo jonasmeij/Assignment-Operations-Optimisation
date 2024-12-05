@@ -73,8 +73,8 @@ def construct_network():
         4: Node(4, 'terminal'),  # Terminal 3
         5: Node(5, 'terminal'),  # Terminal 4
         6: Node(6, 'terminal'),  # Terminal 5
-        7: Node(7, "depot_arr"),
-        8: Node(7, "depot_arr")
+        7: Node(7, "depot_arr"), #dumy depot 1
+        8: Node(8, "depot_arr")  # dumy depot 2
     }
 
     # Define coordinates for each node (latitude, longitude)
