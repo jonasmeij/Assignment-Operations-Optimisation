@@ -73,7 +73,7 @@ def construct_network():
         4: Node(4, 'terminal'),  # Terminal 3
         5: Node(5, 'terminal'),  # Terminal 4
         6: Node(6, 'terminal'),  # Terminal 5
-        7: Node(7, "depot_arr"), #dumy depot 1
+        7: Node(7, "depot_arr"), # dumy depot 1
         8: Node(8, "depot_arr")  # dumy depot 2
     }
 
@@ -89,6 +89,11 @@ def construct_network():
         7: (51.957979, 4.052421),  # Depot 0
         8: (51.912345, 4.234567)
         # Terminal 5
+    }
+
+    depot_to_dummy = {
+        0: 7,  # depot 0 should match with dummy node 7
+        1: 8  # depot 1 should match with dummy node 8
     }
 
     # Define containers with their attributes
@@ -108,6 +113,8 @@ def construct_network():
         (11, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
         (12, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
     ]
+
+
     # Initialize containers dictionary
     containers = {}
     for data in containers_data:
@@ -121,7 +128,7 @@ def construct_network():
         for j in nodes:
             if i != j:
                 distance = geodesic(node_coords[i], node_coords[j]).kilometers  # Calculate distance in km
-                travel_time = distance / 20 *60 # Convert speed to travel time in hours
+                travel_time = distance / 20  # Convert speed to travel time in hours
                 Tij[(i, j)] = travel_time
 
     # Create arcs based on calculated travel times
@@ -145,7 +152,7 @@ def construct_network():
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
-    return nodes, arcs, containers, barges, truck, HT, node_coords
+    return nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy
 
 def check_model_status(model):
     """
@@ -258,7 +265,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
     L = 0.5      # Handling time per container in hours (e.g., loading/unloading time)
-    gamma = 20 # Penalty cost for visiting sea terminals
+    gamma = 2 # Penalty cost for visiting sea terminals
 
     #=========================================================================================================================
     #  Define Decision Variables
@@ -366,12 +373,10 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                     == 0, name=f"Flow_consvervation_{k}_{i}")
 
 
-
-
     # (3) each barge is used at most once
     for k in KB:
         model.addConstr(
-            quicksum(x_ijk[k][(i,j)] for j in N for i in N if nodes[j].type == "terminal" and nodes[i].type == "depot") <= 1,
+            quicksum(x_ijk[k][(i,j)] for j in N for i in N if nodes[i].type == "depot" and i!=j) <= 1,
             name=f"Barge_used_{k}"
         )
 
@@ -487,7 +492,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model.optimize()
 
     # Check the status of the model to ensure feasibility and optimality
-    # check_model_status(model)
+    check_model_status(model)
 
     #=========================================================================================================================
     #  Extract Variable Values
@@ -538,6 +543,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 #=============================================================================================================================
 
 if __name__ == '__main__':
-    nodes, arcs, containers, barges, truck, HT, node_coords = construct_network()
+    nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy = construct_network()
     barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords)
 
