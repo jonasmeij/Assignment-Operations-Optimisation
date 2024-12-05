@@ -180,67 +180,91 @@ def visualize_schedule(nodes, barges, variables, containers):
     t_jk = variables['t_jk']  # Pre-extracted values
     x_ijk = variables['x_ijk']
 
+    # Identify depot nodes
+    depot_nodes = {node_id for node_id, node in nodes.items() if node.type == "depot"}
+
+    if not depot_nodes:
+        print("No depot nodes found.")
+        return
+
     # Prepare barge scheduling data
     barge_data = []
     for k in barges.keys():
-        # Extract node visits based on x_ijk values
+        # Extract arcs (i,j) for which x_ijk > 0.5
         visits = [(i, j) for (i, j), var in x_ijk[k].items() if var.X > 0.5]
         if not visits:
-            continue  # Skip if no route is defined
+            continue  # Skip if no route is defined for this barge
 
-        # Reconstruct the route in order by following the path
         # Create a mapping from origin to destination
         origin_to_dest = {i: j for (i, j) in visits}
 
-        # Find the starting node (node with outgoing arcs but no incoming arcs for this barge)
-        all_origins = set([i for (i, _) in visits])
-        all_destinations = set([j for (_, j) in visits])
-        start_nodes = all_origins - all_destinations
-        if not start_nodes:
-            print(f"Barge {k} has no clear starting node.")
+        # Since it's a loop and must start/end at a depot, find a depot node that is in the route's origins
+        start_node_candidates = depot_nodes.intersection(origin_to_dest.keys())
+        if not start_node_candidates:
+            print(f"Barge {k}: No depot node found as a starting point in the route.")
             continue
-        start_node = start_nodes.pop()
 
-        # Reconstruct the ordered list of arcs
+        # Pick one depot as the starting point
+        start_node = next(iter(start_node_candidates))
+
+        # Reconstruct the loop route
         route = []
         current = start_node
+        visited_count = 0
         while current in origin_to_dest:
             next_node = origin_to_dest[current]
             route.append((current, next_node))
             current = next_node
+            visited_count += 1
 
-        print(f"Barge {k} Route: {route}")  # Debugging statement
+            # Break if we've come back to the start node, completing the loop
+            if current == start_node:
+                break
 
-        # Initialize onboard containers
+            # Just a safety check to prevent infinite loops if there's no proper cycle
+            if visited_count > len(visits):
+                print(f"Barge {k}: Could not reconstruct a proper loop route. Possibly malformed data.")
+                route = []
+                break
+
+        if not route:
+            print(f"Barge {k}: Route could not be constructed.")
+            continue
+
+        print(f"Barge {k} Route: {route}")  # Debug statement
+
+        # Track containers on board as we move along the route
         onboard_containers = set()
 
-        # Add scheduling details to barge data
+        # Since it's a cycle, we should ensure the times and loading/unloading steps make sense
         for (i, j) in route:
-            # **Unload** containers at node j whose destination is j
+            # Unload containers at node j (if any have j as destination)
             for c in containers.values():
                 if f_ck[c.id, k].X > 0.5 and c.destination == j:
                     if c.id in onboard_containers:
                         onboard_containers.discard(c.id)
 
-            # **Load** containers at node i whose origin is i
+            # Load containers at node i (if any have i as origin)
             for c in containers.values():
                 if f_ck[c.id, k].X > 0.5 and c.origin == i:
                     onboard_containers.add(c.id)
 
-            # Build the task description
+            # Start and end time from pre-calculated t_jk
             start_time = t_jk.get((i, k), 0)
             end_time = t_jk.get((j, k), 0)
+
             barge_data.append({
                 'Resource': f'Barge {k}',
                 'Start': start_time,
                 'End': end_time,
-                'Task': f'{i}→{j} (Containers: {", ".join(map(str, sorted(onboard_containers)))} )'
+                'Task': f'{i}→{j} (Containers: {", ".join(map(str, sorted(onboard_containers)))})'
             })
 
     # Prepare truck scheduling data
     truck_data = []
     for c in containers.values():
         if f_ck[c.id, 'T'].X > 0.5:  # If truck is used
+            # Use container release/opening_date as start and closing_date as end if available
             start_time = c.release_date if c.release_date is not None else c.opening_date
             end_time = c.closing_date
             truck_data.append({
@@ -279,9 +303,9 @@ def visualize_schedule(nodes, barges, variables, containers):
             color=color_map[row['Resource']],
             edgecolor='black'
         )
-        # Add task labels to the left of the y-axis
+        # Add task labels to the left of the bars
         ax.text(
-            x=row['Start'] - 5,  # Position well to the left of the bars
+            x=row['Start'] - 5,
             y=row['Row'],
             s=row['Task'],
             va='center',
@@ -298,7 +322,7 @@ def visualize_schedule(nodes, barges, variables, containers):
     ax.grid(True, axis='x', linestyle='--', alpha=0.5)
 
     # Adjust limits to make space for labels
-    ax.set_xlim(left=-10)  # Add space on the left for task labels
+    ax.set_xlim(left=-10)
 
     # Enhance layout
     plt.tight_layout()
