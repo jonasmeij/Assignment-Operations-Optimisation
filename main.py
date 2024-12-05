@@ -141,7 +141,7 @@ def construct_network():
               for barge_id, capacity, fixed_cost in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 2000}
+    HT = {1: 5000}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
@@ -226,7 +226,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 1000  # A large constant used in Big M method for conditional constraints
+    M = 200  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -235,6 +235,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     I = [c.id for c in containers.values() if c.type == 'I']  # Import containers
     K = list(barges.keys()) + ['T']                # Set of barges and 'T' representing trucks
     KB = list(barges.keys())                       # Set of barges only
+    D = [i for i in N if nodes[i].type == 'depot']
+    D_arr = [i for i in N if nodes[i].type == 'depot_arr']
 
     # Define parameters
     Wc = {c.id: c.size for c in containers.values()}  # Wc: Container sizes
@@ -269,6 +271,11 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for c in C:
         for k in K:
             f_ck[c, k] = model.addVar(vtype=GRB.BINARY, name=f"f_{c}_{k}")
+
+    z_kd = {}
+    for k in KB:
+        for d in D:
+            z_kd[k, d] = model.addVar(vtype=GRB.BINARY, name=f"z_{k}_{d}")
 
     # x_ijk: Binary variable indicating if barge k traverses arc (i, j)
     x_ijk = {}
@@ -342,31 +349,47 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         # Explanation:
         # Ensures that each container is assigned to one and only one vehicle (either a barge or a truck)
 
-    # (2) Flow conservation for x_ijk (Barge Routes)
+    # Exactly one start depot per barge
+    for k in KB:
+        model.addConstr(quicksum(z_kd[k, d] for d in D) == 1, name=f"one_depot_start_{k}")
+
+    # Flow constraints
+    offset = 7  # assuming the offset is known
     for k in KB:
         for i in N:
             if nodes[i].type == 'depot':
                 model.addConstr(
                     (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
                      quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == 1, name=f"Flow_consvervation_{k}_{i}")
+                    == quicksum(z_kd[k, d] for d in D if d == i),
+                    name=f"flow_conservation_start_{k}_{i}"
+                )
 
-            elif nodes[i].type == "depot_arr":
-                model.addConstr(
-                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
-                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == -1, name=f"Flow_consvervation_{k}_{i}")
+            elif nodes[i].type == 'depot_arr':
+                # For depot_arr node i, find the corresponding depot d = i - offset
+                d = i - offset
+                # Ensure d is indeed a depot
+                if d in D:
+                    model.addConstr(
+                        (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
+                         quicksum(x_ijk[k][(j, i)] for j in N if j != i))
+                        == -quicksum(z_kd[k, d2] for d2 in D if d2 == d),
+                        name=f"flow_conservation_end_{k}_{i}"
+                    )
+                else:
+                    # If it doesn't match a known depot, just force balanced flow
+                    model.addConstr(
+                        (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
+                         quicksum(x_ijk[k][(j, i)] for j in N if j != i))
+                        == 0, name=f"flow_conservation_invalid_{k}_{i}"
+                    )
             else:
+                # All other nodes balanced flow
                 model.addConstr(
                     (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
                      quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == 0, name=f"Flow_consvervation_{k}_{i}")
-
-
-
+                    == 0, name=f"flow_conservation_intermediate_{k}_{i}"
+                )
 
     # (3) each barge is used at most once
     for k in KB:
