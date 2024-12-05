@@ -121,7 +121,7 @@ def construct_network():
         for j in nodes:
             if i != j:
                 distance = geodesic(node_coords[i], node_coords[j]).kilometers  # Calculate distance in km
-                travel_time = distance / 20   # Convert speed to travel time in hours
+                travel_time = distance / 20 *60 # Convert speed to travel time in hours
                 Tij[(i, j)] = travel_time
 
     # Create arcs based on calculated travel times
