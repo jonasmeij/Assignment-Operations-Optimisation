@@ -73,6 +73,8 @@ def construct_network():
         4: Node(4, 'terminal'),  # Terminal 3
         5: Node(5, 'terminal'),  # Terminal 4
         6: Node(6, 'terminal'),  # Terminal 5
+        7: Node(7, "depot_arr"),
+        8: Node(7, "depot_arr")
     }
 
     # Define coordinates for each node (latitude, longitude)
@@ -83,7 +85,10 @@ def construct_network():
         3: (51.955480, 4.052490),  # Terminal 2
         4: (51.961111, 4.034722),  # Terminal 3
         5: (51.906540, 4.122230),  # Terminal 4
-        6: (51.904251, 4.141221),  # Terminal 5
+        6: (51.904251, 4.141221),
+        7: (51.957979, 4.052421),  # Depot 0
+        8: (51.912345, 4.234567)
+        # Terminal 5
     }
 
     # Define containers with their attributes
@@ -96,12 +101,12 @@ def construct_network():
         (5, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 5
         (6, 2, 6, 10, 14, 1, 2, 'E'),  # From Depot 1 to Terminal 1
         # Import Containers (from Terminals to Depots)
-        (7, 1, None, 3, 9, 2, 0, 'I'),  # From Terminal 1 to Depot 0
-        (8, 2, None, 2, 7, 3, 1, 'I'),  # From Terminal 2 to Depot 1
-        (9, 1, None, 5, 11, 4, 0, 'I'),  # From Terminal 3 to Depot 0
-        (10, 2, None, 6, 12, 5, 1, 'I'),  # From Terminal 4 to Depot 1
-        (11, 1, None, 8, 14, 6, 0, 'I'),  # From Terminal 5 to Depot 0
-        (12, 2, None, 9, 15, 2, 1, 'I'),  # From Terminal 1 to Depot 1
+        (7, 1, None, 3, 9, 2, 7, 'I'),  # From Terminal 1 to Depot 0
+        (8, 2, None, 2, 7, 3, 8, 'I'),  # From Terminal 2 to Depot 1
+        (9, 1, None, 5, 11, 4, 7, 'I'),  # From Terminal 3 to Depot 0
+        (10, 2, None, 6, 12, 5, 8, 'I'),  # From Terminal 4 to Depot 1
+        (11, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
+        (12, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
     ]
     # Initialize containers dictionary
     containers = {}
@@ -340,11 +345,27 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     # (2) Flow conservation for x_ijk (Barge Routes)
     for k in KB:
         for i in N:
-            model.addConstr(
-                (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
+            if nodes[i].type == 'depot':
+                model.addConstr(
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
+
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
+                    == 1, name=f"Flow_consvervation_{k}_{i}")
+
+            elif nodes[i].type == "depot_arr":
+                model.addConstr(
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
+
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
+                    == -1, name=f"Flow_consvervation_{k}_{i}")
+            else:
+                model.addConstr(
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
 
                      quicksum(x_ijk[k][(j, i)] for j in N if j != i))
                     == 0, name=f"Flow_consvervation_{k}_{i}")
+
+
 
 
     # (3) each barge is used at most once
