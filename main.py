@@ -39,10 +39,11 @@ class Arc:
         self.travel_time = travel_time        # Tij: Travel time in minutes between origin and destination
 
 class Barge:
-    def __init__(self, barge_id, capacity, fixed_cost):
+    def __init__(self, barge_id, capacity, fixed_cost,origin):
         self.id = barge_id                    # Unique identifier for the barge
         self.capacity = capacity              # Qk: Maximum capacity of the barge
-        self.fixed_cost = fixed_cost          # Hk^B: Fixed cost associated with using the barge
+        self.fixed_cost = fixed_cost    #Hk^B: Fixed cost associated with using the barge
+        self.origin = origin
 
 class Truck:
     def __init__(self, cost_per_container):
@@ -73,7 +74,7 @@ def construct_network():
         4: Node(4, 'terminal'),  # Terminal 3
         5: Node(5, 'terminal'),  # Terminal 4
         6: Node(6, 'terminal'),  # Terminal 5
-        7: Node(7, "depot_arr"), #dumy depot 1
+        7: Node(7, "depot_arr"), # dumy depot 1
         8: Node(8, "depot_arr")  # dumy depot 2
     }
 
@@ -89,6 +90,11 @@ def construct_network():
         7: (51.957979, 4.052421),  # Depot 0
         8: (51.912345, 4.234567)
         # Terminal 5
+    }
+
+    depot_to_dummy = {
+        0: 7,  # depot 0 should match with dummy node 7
+        1: 8  # depot 1 should match with dummy node 8
     }
 
     # Define containers with their attributes
@@ -108,6 +114,8 @@ def construct_network():
         (11, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
         (12, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
     ]
+
+
     # Initialize containers dictionary
     containers = {}
     for data in containers_data:
@@ -121,7 +129,7 @@ def construct_network():
         for j in nodes:
             if i != j:
                 distance = geodesic(node_coords[i], node_coords[j]).kilometers  # Calculate distance in km
-                travel_time = distance / 20 *60 # Convert speed to travel time in hours
+                travel_time = distance / 20  # Convert speed to travel time in hours
                 Tij[(i, j)] = travel_time
 
     # Create arcs based on calculated travel times
@@ -134,18 +142,18 @@ def construct_network():
 
     # Define barges with their capacities and fixed costs
     barges_data = [
-        (1, 10, 1000),  # Barge 1: Capacity=10, Fixed Cost=1000
-        (2, 10, 1000),  # Barge 2: Capacity=10, Fixed Cost=1000
+        (1, 10, 1000,0),  # Barge 1: Capacity=10, Fixed Cost=1000, origin
+        (2, 10, 1000,1),  # Barge 2: Capacity=10, Fixed Cost=1000, origin
     ]
-    barges = {barge_id: Barge(barge_id, capacity, fixed_cost)
-              for barge_id, capacity, fixed_cost in barges_data}
+    barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
+              for barge_id, capacity, fixed_cost,origin in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 2000}
+    HT = {1: 500}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
-    return nodes, arcs, containers, barges, truck, HT, node_coords
+    return nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy
 
 def check_model_status(model):
     """
@@ -210,7 +218,7 @@ def print_model_result(model, variables, barges, containers):
 #  Optimization of the Model using Gurobi
 #=============================================================================================================================
 
-def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords):
+def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy):
     """
     Optimizes barge and truck scheduling for transporting containers between depots and terminals.
     Args:
@@ -255,10 +263,11 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     HBk = {k: barges[k].fixed_cost for k in barges.keys()}  # HBk: Fixed costs for each barge
     Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
+    Or = {k: barges[k].origin for k in barges.keys()} #origin for each barge
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
-    L = 0.5      # Handling time per container in hours (e.g., loading/unloading time)
-    gamma = 20 # Penalty cost for visiting sea terminals
+    L = 0.05      # Handling time per container in hours (e.g., loading/unloading time)
+    gamma = 0.05 # Penalty cost for visiting sea terminals
 
     #=========================================================================================================================
     #  Define Decision Variables
@@ -344,36 +353,51 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     # (2) Flow conservation for x_ijk (Barge Routes)
     for k in KB:
+        origin_node = Or[k]  # Get the origin node for barge k
+        destination_node = depot_to_dummy[origin_node]  # Map to the corresponding depot_arr node
         for i in N:
-            if nodes[i].type == 'depot':
+            if i == origin_node:
+                # Flow conservation for the origin node of barge k
                 model.addConstr(
-                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
-                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == 1, name=f"Flow_consvervation_{k}_{i}")
-
-            elif nodes[i].type == "depot_arr":
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                    == 1,
+                    name=f"Flow_conservation_origin_{k}_{i}"
+                )
+            elif i == destination_node:
+                # Flow conservation for the destination node of barge k
                 model.addConstr(
-                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
-                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == -1, name=f"Flow_consvervation_{k}_{i}")
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                    == -1,
+                    name=f"Flow_conservation_destination_{k}_{i}"
+                )
             else:
+                # Flow conservation for all other nodes
                 model.addConstr(
-                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
-                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == 0, name=f"Flow_consvervation_{k}_{i}")
-
-
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                    == 0,
+                    name=f"Flow_conservation_internal_{k}_{i}"
+                )
 
 
     # (3) each barge is used at most once
     for k in KB:
         model.addConstr(
-            quicksum(x_ijk[k][(i,j)] for j in N for i in N if nodes[j].type == "terminal" and nodes[i].type == "depot") <= 1,
+            quicksum(x_ijk[k][(i,j)] for j in N for i in N if
+                     nodes[i].type == "depot" and i!=j) <= 1,
             name=f"Barge_used_{k}"
         )
+
+    # (31) Add constraints to ensure barges only carry containers from their origin depot
+    for k in KB:
+        origin_node = Or[k]
+        for c in C:
+            if containers[c].origin != origin_node and containers[c].type == 'E':
+                model.addConstr(f_ck[c, k] == 0, name=f"Origin_constraint_{c}_{k}")
+
+
 
     # (4) Import quantities loaded by barge k at sea terminal j
     for k in KB:
@@ -517,8 +541,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         't_jk': t_jk_values
     }
 
-    print(x_ijk_values)
-
     #=========================================================================================================================
     #  Output Results and Visualization
     #=========================================================================================================================
@@ -538,6 +560,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 #=============================================================================================================================
 
 if __name__ == '__main__':
-    nodes, arcs, containers, barges, truck, HT, node_coords = construct_network()
-    barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords)
+    nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy = construct_network()
+    barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy)
 
