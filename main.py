@@ -149,7 +149,7 @@ def construct_network():
               for barge_id, capacity, fixed_cost,origin in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 2000}
+    HT = {1: 500}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
@@ -218,7 +218,7 @@ def print_model_result(model, variables, barges, containers):
 #  Optimization of the Model using Gurobi
 #=============================================================================================================================
 
-def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords):
+def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy):
     """
     Optimizes barge and truck scheduling for transporting containers between depots and terminals.
     Args:
@@ -511,7 +511,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model.optimize()
 
     # Check the status of the model to ensure feasibility and optimality
-    check_model_status(model)
+    # check_model_status(model)
 
     #=========================================================================================================================
     #  Extract Variable Values
@@ -541,8 +541,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         't_jk': t_jk_values
     }
 
-    print(x_ijk_values)
-
     #=========================================================================================================================
     #  Output Results and Visualization
     #=========================================================================================================================
@@ -563,5 +561,5 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
 if __name__ == '__main__':
     nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy = construct_network()
-    barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords)
+    barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy)
 

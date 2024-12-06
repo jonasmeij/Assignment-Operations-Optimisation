@@ -1,6 +1,4 @@
-
 def visualize_routes(nodes, barges, variables, containers, node_coords):
-    from pyproj import Geod
     import folium
 
     x_ijk = variables['x_ijk']
@@ -25,6 +23,12 @@ def visualize_routes(nodes, barges, variables, containers, node_coords):
                 popup=f"Terminal (Node {node_id})",
                 icon=folium.Icon(color='blue', icon='anchor')
             ).add_to(m)
+        elif node.type == 'depot_arr':
+            folium.Marker(
+                location=coords,
+                popup=f"Depot Arrival (Node {node_id})",
+                icon=folium.Icon(color='gray')
+            ).add_to(m)
         else:
             folium.Marker(
                 location=coords,
@@ -38,28 +42,14 @@ def visualize_routes(nodes, barges, variables, containers, node_coords):
     for idx, k in enumerate(barges.keys()):
         barge_color_map[k] = barge_colors[idx % len(barge_colors)]
 
-    # Function to offset coordinates slightly to avoid overlapping
-    def offset_coords(coords, offset_meters):
-        geod = Geod(ellps='WGS84')
-        lat, lon = coords  # Coordinates are in (lat, lon)
-        # Offset by moving north and east by a small amount
-        azimuth = 45  # Northeast direction
-        lon_offset, lat_offset, _ = geod.fwd(lon, lat, azimuth, offset_meters)
-        return [lat_offset, lon_offset]  # Return in (lat, lon) order
-
     # Plot barge routes with labels
     for k in barges.keys():
         visits = [(i, j) for (i, j), var in x_ijk[k].items() if var.X > 0.5]
         if not visits:
             continue  # Skip if no route is defined
 
-        # Extract time variables to sort the visits
-        t_jk = variables['t_jk']
-        # Create a list of visits with their start times
-        sorted_visits = sorted(visits, key=lambda arc: t_jk.get((arc[0], k), 0))
-
-        # Reconstruct the route based on sorted times
-        route = sorted_visits
+        # Reconstruct the route based on traversed arcs
+        route = visits
 
         # Extract coordinates in order
         route_coords = []
@@ -70,21 +60,19 @@ def visualize_routes(nodes, barges, variables, containers, node_coords):
         last_j = route[-1][1]
         route_coords.append(node_coords[last_j])
 
-        # Offset the route slightly to avoid overlapping
-        offset_route = [offset_coords(coords, idx * 10) for idx, coords in enumerate(route_coords)]
-
+        # Draw the polyline without offsetting
         folium.PolyLine(
-            locations=offset_route,
+            locations=route_coords,
             color=barge_color_map[k],
             weight=5,
             opacity=0.8,
             tooltip=f"Barge {k}"
         ).add_to(m)
         # Add labels along the route
-        for idx in range(len(offset_route) - 1):
-            mid_lat = (offset_route[idx][0] + offset_route[idx + 1][0]) / 2
-            mid_lon = (offset_route[idx][1] + offset_route[idx + 1][1]) / 2
-            folium.map.Marker(
+        for idx in range(len(route_coords) - 1):
+            mid_lat = (route_coords[idx][0] + route_coords[idx + 1][0]) / 2
+            mid_lon = (route_coords[idx][1] + route_coords[idx + 1][1]) / 2
+            folium.Marker(
                 [mid_lat, mid_lon],
                 icon=folium.DivIcon(
                     icon_size=(150, 36),
@@ -93,38 +81,40 @@ def visualize_routes(nodes, barges, variables, containers, node_coords):
                 )
             ).add_to(m)
 
-    # Plot truck routes with labels
-    truck_routes = []
+    # Plot truck routes with labels indicating number of trucks per route
+    # Collect all containers assigned to trucks
+    truck_routes = {}
     for c in containers.values():
         if f_ck[c.id, 'T'].X > 0.5:
             origin = c.origin
             destination = c.destination
-            coords_o = node_coords[origin]
-            coords_d = node_coords[destination]
-            truck_routes.append((coords_o, coords_d))
+            route_key = (origin, destination)
+            if route_key in truck_routes:
+                truck_routes[route_key] += 1
+            else:
+                truck_routes[route_key] = 1
 
-    # Offset and plot truck routes
-    for idx, (coords_o, coords_d) in enumerate(truck_routes):
-        # Offset the route slightly to avoid overlapping
-        offset_o = offset_coords(coords_o, idx * 10 + 20)
-        offset_d = offset_coords(coords_d, idx * 10 + 20)
+    # Plot each unique truck route with the count
+    for (origin, destination), count in truck_routes.items():
+        coords_o = node_coords[origin]
+        coords_d = node_coords[destination]
         folium.PolyLine(
-            locations=[offset_o, offset_d],
+            locations=[coords_o, coords_d],
             color='black',
             weight=2,
-            opacity=0.8,
+            opacity=0.2,
             dash_array='5, 10',
-            tooltip=f"Truck Route"
+            tooltip=f"Truck Route: {count} truck(s)"
         ).add_to(m)
         # Add label at midpoint
-        mid_lat = (offset_o[0] + offset_d[0]) / 2
-        mid_lon = (offset_o[1] + offset_d[1]) / 2
-        folium.map.Marker(
+        mid_lat = (coords_o[0] + coords_d[0]) / 2
+        mid_lon = (coords_o[1] + coords_d[1]) / 2
+        folium.Marker(
             [mid_lat, mid_lon],
             icon=folium.DivIcon(
                 icon_size=(150, 36),
                 icon_anchor=(0, 0),
-                html=f'<div style="font-size: 10pt; color : black;">Truck</div>',
+                html=f'<div style="font-size: 10pt; color : black;">{count} Truck(s)</div>',
             )
         ).add_to(m)
 
@@ -167,8 +157,6 @@ def visualize_routes(nodes, barges, variables, containers, node_coords):
     # Save the map to an HTML file
     m.save('rotterdam_routes.html')
     print("Map has been saved to 'rotterdam_routes.html'. Open this file in a web browser to view the map.")
-
-
 
 
 def visualize_schedule(nodes, barges, variables, containers):
@@ -327,5 +315,123 @@ def visualize_schedule(nodes, barges, variables, containers):
     # Enhance layout
     plt.tight_layout()
     plt.show()
+
+def visualize_schedule_random(nodes, barges, variables, containers):
+    import matplotlib.pyplot as plt
+    import pandas as pd
+
+    # Extract variables
+    f_ck = variables['f_ck']
+    t_jk = variables['t_jk']
+    x_ijk = variables['x_ijk']
+
+    # Identify depot nodes
+    depot_nodes = {node_id for node_id, node in nodes.items() if node.type == "depot"}
+
+    if not depot_nodes:
+        print("No depot nodes found.")
+        return
+
+    # Prepare barge scheduling data
+    barge_data = []
+    for k in barges.keys():
+        visits = [(i, j) for (i, j), var in x_ijk[k].items() if var.X > 0.5]
+        if not visits:
+            continue
+
+        origin_to_dest = {i: j for (i, j) in visits}
+        start_node_candidates = depot_nodes.intersection(origin_to_dest.keys())
+        if not start_node_candidates:
+            continue
+
+        start_node = next(iter(start_node_candidates))
+        route = []
+        current = start_node
+        visited_count = 0
+        while current in origin_to_dest:
+            next_node = origin_to_dest[current]
+            route.append((current, next_node))
+            current = next_node
+            visited_count += 1
+            if current == start_node:
+                break
+            if visited_count > len(visits):
+                route = []
+                break
+
+        for (i, j) in route:
+            start_time = t_jk.get((i, k), 0)
+            end_time = t_jk.get((j, k), 0)
+            barge_data.append({
+                'Resource': f'Barge {k}',
+                'Start': start_time,
+                'End': end_time,
+                'Task': f'{i}→{j}'
+            })
+
+    # Count total containers assigned to trucks
+    truck_containers_count = sum(1 for c in containers.values() if f_ck[c.id, 'T'].X > 0.5)
+
+    # Combine barge data into a DataFrame
+    df = pd.DataFrame(barge_data)
+
+    if df.empty:
+        print("No barge scheduling data to visualize.")
+        return
+
+    # Add a row index for plotting
+    df['Row'] = range(len(df))
+
+    # Create the plot
+    fig, ax = plt.subplots(figsize=(8.27, 5.83))  # A5 landscape size in inches
+
+    # Assign colors to resources
+    resources = df['Resource'].unique()
+    colors = plt.cm.get_cmap('tab20', len(resources))
+    color_map = {resource: colors(i) for i, resource in enumerate(resources)}
+
+    # Plot each task as a horizontal bar
+    for _, row in df.iterrows():
+        ax.barh(
+            y=row['Row'],
+            width=row['End'] - row['Start'],
+            left=row['Start'],
+            height=0.6,
+            color=color_map[row['Resource']],
+            edgecolor='black'
+        )
+        # Add a simple task label in the center of each bar
+        ax.text(
+            x=row['Start'] + (row['End'] - row['Start']) / 2,
+            y=row['Row'],
+            s=row['Task'],
+            va='center',
+            ha='center',
+            color='white',
+            fontsize=8
+        )
+
+    # Customize the axes
+    ax.set_xlabel('Time', fontsize=10)
+    ax.set_yticks(df['Row'])
+    ax.set_yticklabels(df['Resource'])
+    ax.set_title('Schedule of Barges (A5 Size)', fontsize=12)
+    ax.grid(True, axis='x', linestyle='--', alpha=0.5)
+
+    # Add legend for the number of containers assigned to trucks
+    legend_text = f'Total Containers Assigned to Trucks: {truck_containers_count}'
+    ax.text(
+        1.05, 0.5, legend_text, transform=ax.transAxes, fontsize=10,
+        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'),
+        verticalalignment='center'
+    )
+
+    # Final layout adjustments
+    plt.tight_layout()
+    plt.show()
+
+
+
+
 
 
