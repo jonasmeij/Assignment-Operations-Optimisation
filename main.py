@@ -39,10 +39,11 @@ class Arc:
         self.travel_time = travel_time        # Tij: Travel time in minutes between origin and destination
 
 class Barge:
-    def __init__(self, barge_id, capacity, fixed_cost):
+    def __init__(self, barge_id, capacity, fixed_cost,origin):
         self.id = barge_id                    # Unique identifier for the barge
         self.capacity = capacity              # Qk: Maximum capacity of the barge
-        self.fixed_cost = fixed_cost          # Hk^B: Fixed cost associated with using the barge
+        self.fixed_cost = fixed_cost    #Hk^B: Fixed cost associated with using the barge
+        self.origin = origin
 
 class Truck:
     def __init__(self, cost_per_container):
@@ -141,11 +142,11 @@ def construct_network():
 
     # Define barges with their capacities and fixed costs
     barges_data = [
-        (1, 10, 1000),  # Barge 1: Capacity=10, Fixed Cost=1000
-        (2, 10, 1000),  # Barge 2: Capacity=10, Fixed Cost=1000
+        (1, 10, 1000,0),  # Barge 1: Capacity=10, Fixed Cost=1000, origin
+        (2, 10, 1000,1),  # Barge 2: Capacity=10, Fixed Cost=1000, origin
     ]
-    barges = {barge_id: Barge(barge_id, capacity, fixed_cost)
-              for barge_id, capacity, fixed_cost in barges_data}
+    barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
+              for barge_id, capacity, fixed_cost,origin in barges_data}
 
     # Define trucks with their cost per container
     HT = {1: 2000}
@@ -262,10 +263,11 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     HBk = {k: barges[k].fixed_cost for k in barges.keys()}  # HBk: Fixed costs for each barge
     Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
+    Or = {k: barges[k].origin for k in barges.keys()} #origin for each barge
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
-    L = 0.5      # Handling time per container in hours (e.g., loading/unloading time)
-    gamma = 2 # Penalty cost for visiting sea terminals
+    L = 0.05      # Handling time per container in hours (e.g., loading/unloading time)
+    gamma = 0.05 # Penalty cost for visiting sea terminals
 
     #=========================================================================================================================
     #  Define Decision Variables
@@ -351,34 +353,51 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     # (2) Flow conservation for x_ijk (Barge Routes)
     for k in KB:
+        origin_node = Or[k]  # Get the origin node for barge k
+        destination_node = depot_to_dummy[origin_node]  # Map to the corresponding depot_arr node
         for i in N:
-            if nodes[i].type == 'depot':
+            if i == origin_node:
+                # Flow conservation for the origin node of barge k
                 model.addConstr(
-                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
-                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == 1, name=f"Flow_consvervation_{k}_{i}")
-
-            elif nodes[i].type == "depot_arr":
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                    == 1,
+                    name=f"Flow_conservation_origin_{k}_{i}"
+                )
+            elif i == destination_node:
+                # Flow conservation for the destination node of barge k
                 model.addConstr(
-                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
-                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == -1, name=f"Flow_consvervation_{k}_{i}")
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                    == -1,
+                    name=f"Flow_conservation_destination_{k}_{i}"
+                )
             else:
+                # Flow conservation for all other nodes
                 model.addConstr(
-                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i) -
-
-                     quicksum(x_ijk[k][(j, i)] for j in N if j != i))
-                    == 0, name=f"Flow_consvervation_{k}_{i}")
+                    (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                     quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                    == 0,
+                    name=f"Flow_conservation_internal_{k}_{i}"
+                )
 
 
     # (3) each barge is used at most once
     for k in KB:
         model.addConstr(
-            quicksum(x_ijk[k][(i,j)] for j in N for i in N if nodes[i].type == "depot" and i!=j) <= 1,
+            quicksum(x_ijk[k][(i,j)] for j in N for i in N if
+                     nodes[i].type == "depot" and i!=j) <= 1,
             name=f"Barge_used_{k}"
         )
+
+    # (31) Add constraints to ensure barges only carry containers from their origin depot
+    for k in KB:
+        origin_node = Or[k]
+        for c in C:
+            if containers[c].origin != origin_node and containers[c].type == 'E':
+                model.addConstr(f_ck[c, k] == 0, name=f"Origin_constraint_{c}_{k}")
+
+
 
     # (4) Import quantities loaded by barge k at sea terminal j
     for k in KB:
