@@ -149,7 +149,8 @@ def construct_network():
               for barge_id, capacity, fixed_cost,origin in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 500}
+    HT = {1: 500,
+          2:1000}
                              # change time per truck also if you want to change the cost
 
     truck = Truck(cost_per_container=HT)
@@ -192,10 +193,10 @@ def print_model_result(model, variables, barges, containers):
         assigned = False
         for k in barges.keys():
             if f_ck[c.id, k].X > 0.5:
-                print(f"Container {c.id} is allocated to Barge {k}")
+                print(f"Container {c.id} is allocated to Barge {k} to route {c.origin}-{c.destination}")
                 assigned = True
         if f_ck[c.id, 'T'].X > 0.5:
-            print(f"Container {c.id} is allocated to Truck")
+            print(f"Container {c.id} is allocated to Truck to  {c.origin}-{c.destination}")
             assigned = True
         if not assigned:
             print(f"Container {c.id} is not assigned to any vehicle.")
@@ -234,7 +235,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     model = Model("BargeScheduling")
 
     # Big M
-    M = 1000  # A large constant used in Big M method for conditional constraints
+    M =20  # A large constant used in Big M method for conditional constraints
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -317,6 +318,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         for j in N:
             t_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"t_{j}_{k}")
 
+
+
     #=========================================================================================================================
     #  Define Objective Function
     #=========================================================================================================================
@@ -329,7 +332,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     - Penalties for visiting sea terminals unnecessarily.
     """
     model.setObjective(
-        quicksum(f_ck[c, 'T'] * HT[1] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
+        quicksum(f_ck[c, 'T'] * HT[Wc[c]] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
 
         quicksum(x_ijk[k][i,j] * HBk[k] for k in KB for j in N for i in N if nodes[j].type == 'terminal' and nodes[i].type =="depot")
         +  # Barge fixed costs: Applied only when departing from depots
@@ -351,7 +354,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         # Explanation:
         # Ensures that each container is assigned to one and only one vehicle (either a barge or a truck)
 
-    # (2) Flow conservation for x_ijk (Barge Routes)
+    # CHANGED (2) Flow conservation for x_ijk (Barge Routes)
     for k in KB:
         origin_node = Or[k]  # Get the origin node for barge k
         destination_node = depot_to_dummy[origin_node]  # Map to the corresponding depot_arr node
@@ -390,12 +393,22 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
             name=f"Barge_used_{k}"
         )
 
-    # (31) Add constraints to ensure barges only carry containers from their origin depot
+    # ADDED (31) Add constraints to ensure barges only carry containers from their origin depot
     for k in KB:
         origin_node = Or[k]
         for c in C:
             if containers[c].origin != origin_node and containers[c].type == 'E':
                 model.addConstr(f_ck[c, k] == 0, name=f"Origin_constraint_{c}_{k}")
+
+    # ADDED (32) add contraints to ensure barge visits destination node of container
+    for c in E + I:
+        destination = containers[c].destination
+        for k in KB:
+            # Barge k must enter the destination node if it carries container c
+            model.addConstr(
+                quicksum(x_ijk[k][(i, destination)] for i in N if (i, destination) in Tij) >= f_ck[c, k],
+                name=f"Barge_{k}_traverse_destination_{c}"
+            )
 
 
 
@@ -495,6 +508,16 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                         t_jk[j, k] * Zcj[c, j] <= Dc[c] + (1 - f_ck[c, k]) * M,
                         name=f"ClosingTime_{c}_{j}_{k}"
                     )
+    # ADDED (14) time of delivery is after time of pickup
+    for c in C:
+        origin = containers[c].origin
+        destination = containers[c].destination
+        for k in KB:
+            # Only apply if container c is assigned to barge k
+            model.addConstr(
+                t_jk[destination, k] >= t_jk[origin, k]  - (1 - f_ck[c, k]) * M,
+                name=f"Sequence_origin_before_destination_indirect_{k}_{c}"
+            )
 
     #=========================================================================================================================
     #  Optimize the Model
