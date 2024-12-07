@@ -739,11 +739,11 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     print_model_result(model, variables, barges, containers)
 
     # Visualize the barge and truck routes on a map
-    # visualize_routes_static(nodes, barges, variables, containers, node_coords)
-    # visualize_routes(nodes, barges, variables, containers, node_coords,"folium_map_random.html")
+    visualize_routes_static(nodes, barges, variables, containers, node_coords)
+    visualize_routes(nodes, barges, variables, containers, node_coords,"folium_map_random.html")
     #
     # # Visualize the schedule in gantt chart format of container movements
-    # visualize_schedule_random(nodes, barges, variables, containers)
+    visualize_schedule_random(nodes, barges, variables, containers)
     visualize_routes_terminals(nodes, barges, variables, containers, node_coords, "barge_routes.png")
 
 
