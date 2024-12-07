@@ -1,5 +1,18 @@
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+import matplotlib.font_manager as fm
+import folium
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from matplotlib.lines import Line2D
+from matplotlib import cm
+import numpy as np
+from pyproj import Geod
+import random
+
+
+
 def visualize_routes(nodes, barges, variables, containers, node_coords,file_name):
-    import folium
 
     x_ijk = variables['x_ijk']
     f_ck = variables['f_ck']
@@ -279,7 +292,7 @@ def visualize_schedule(nodes, barges, variables, containers):
     plt.tight_layout()
     plt.show()
 
-def visualize_schedule_random(nodes, barges, variables, containers):
+def visualize_schedule_random(nodes, barges, variables, containers,output_file):
     import matplotlib.pyplot as plt
     import pandas as pd
 
@@ -329,7 +342,8 @@ def visualize_schedule_random(nodes, barges, variables, containers):
                 'Resource': f'Barge {k}',
                 'Start': start_time,
                 'End': end_time,
-                'Task': f'{i}→{j}'
+                'Task': f'{i}→{j}',
+                'Barge': k  # Include barge identifier for grouping later
             })
 
     # Count total containers assigned to trucks
@@ -344,6 +358,13 @@ def visualize_schedule_random(nodes, barges, variables, containers):
 
     # Add a row index for plotting
     df['Row'] = range(len(df))
+
+    # Compute the midpoint for each barge schedule
+    barge_midpoints = (
+        df.groupby('Resource')
+        .agg(Midpoint=('Row', 'mean'))
+        .reset_index()
+    )
 
     # Create the plot
     fig, ax = plt.subplots(figsize=(8.27, 5.83))  # A5 landscape size in inches
@@ -374,10 +395,22 @@ def visualize_schedule_random(nodes, barges, variables, containers):
             fontsize=8
         )
 
+    # Add text for each barge in the middle of its schedule
+    for _, midpoint in barge_midpoints.iterrows():
+        ax.text(
+            x=-50,  # Place the text outside the left side of the plot
+            y=midpoint['Midpoint'],
+            s=midpoint['Resource'],
+            va='center',
+            ha='right',
+            fontsize=10,
+            fontweight='bold'
+        )
+
     # Customize the axes
     ax.set_xlabel('Time', fontsize=10)
     ax.set_yticks(df['Row'])
-    ax.set_yticklabels(df['Resource'])
+    ax.set_yticklabels([])  # Remove repeated barge labels from individual rows
     ax.set_title('Schedule of Barges (A5 Size)', fontsize=12)
     ax.grid(True, axis='x', linestyle='--', alpha=0.5)
 
@@ -392,22 +425,13 @@ def visualize_schedule_random(nodes, barges, variables, containers):
     # Final layout adjustments
     plt.tight_layout()
     plt.show()
+    plt.savefig(output_file)
 
-
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from matplotlib.lines import Line2D
-from matplotlib.patches import FancyArrowPatch
-from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
-import matplotlib.font_manager as fm
-import cartopy.io.shapereader as shpreader
 
 
 def visualize_routes_static(
         nodes, barges, variables, containers, node_coords,
-        output_filename_full='rotterdam_routes_full.png',
-        output_filename_terminals='rotterdam_routes_terminals.png'
+        output_filename_full
 ):
     """
     Visualize detailed routes on static maps using Cartopy and Matplotlib.
@@ -645,28 +669,39 @@ def visualize_routes_static(
             linewidth=2.5,
             linestyle='-',
             marker=None,
+            alpha = 0.7 ,
             transform=ccrs.PlateCarree(),
             label=f'Barge {k}' if f'Barge {k}' not in ax_full.get_legend_handles_labels()[1] else ""
         )
 
-        # Add direction arrows to the route
-        for i in range(len(lons_route) - 1):
-            start_lon, start_lat = lons_route[i], lats_route[i]
-            end_lon, end_lat = lons_route[i + 1], lats_route[i + 1]
-            # Calculate midpoint for arrow placement to avoid clutter
-            mid_lon = (start_lon + end_lon) / 2
-            mid_lat = (start_lat + end_lat) / 2
-            # Add an arrow from midpoint to end
-            arrow = FancyArrowPatch(
-                (mid_lon, mid_lat),
-                (end_lon, end_lat),
-                arrowstyle='->',
-                mutation_scale=15,
-                color=barge_color_map[k],
-                linewidth=0,
-                transform=ccrs.PlateCarree()
-            )
-            ax_full.add_patch(arrow)
+        # Add an arrow to indicate direction
+        if len(lons_route) >= 2:
+            # Define the number of arrows you want to display along the route
+            num_arrows = max(len(lons_route) // 10, 1)  # Adjust the divisor for spacing
+            for idx in range(0, len(lons_route) - 1, num_arrows):
+                start_lon, start_lat = lons_route[idx], lats_route[idx]
+                end_lon, end_lat = lons_route[idx + 1], lats_route[idx + 1]
+
+                # Calculate arrow properties
+                dx = end_lon - start_lon
+                dy = end_lat - start_lat
+
+                ax_full.annotate(
+                    '',  # No text
+                    xy=(end_lon, end_lat),  # Arrow end
+                    xytext=(start_lon, start_lat),  # Arrow start
+                    arrowprops=dict(
+                        arrowstyle="->",
+                        color=barge_color_map[k],
+                        linewidth=1.5,
+                        shrinkA=0,
+                        shrinkB=0,
+                        alpha=0.8
+                    ),
+                    transform=ccrs.PlateCarree()
+                )
+
+
 
     # Create custom legend for full map
     legend_elements_full = []
@@ -678,7 +713,7 @@ def visualize_routes_static(
     ))
     legend_elements_full.append(Line2D(
         [0], [0], marker='^', color='w', label='Terminal',
-        markerfacecolor='blue', markersize=8, markeredgecolor='black'
+        markerfacecolor='blue', markersize=5, markeredgecolor='black'
     ))
     legend_elements_full.append(Line2D(
         [0], [0], marker='o', color='w', label='Node',
@@ -744,15 +779,6 @@ def visualize_routes_static(
     plt.close(fig_full)
     print(f"Full map has been saved to '{output_filename_full}'.")
 
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from matplotlib.lines import Line2D
-from matplotlib import cm
-import numpy as np
-from shapely.geometry import LineString, box
-from pyproj import Geod
-import random
 
 def visualize_routes_terminals(
     nodes,
@@ -765,9 +791,9 @@ def visualize_routes_terminals(
 ):
     """
     Visualizes barge routes on a dynamic geographical map focusing only on terminals.
-    Adds a randomized starting line for each barge from the top-right corner.
+    Adds starting and ending points for each barge in the top-right corner of the map.
     Assigns a unique color to each barge and includes a comprehensive legend.
-    Saves the map as a high-resolution image.
+    Excludes barges with only one arc. Saves the map as a high-resolution image.
 
     Args:
         nodes (dict): Dictionary of Node objects.
@@ -804,142 +830,95 @@ def visualize_routes_terminals(
 
     # Create the figure and axis with Cartopy projection
     fig, ax = plt.subplots(figsize=(12, 10), subplot_kw={'projection': projection})
-
-    # Set the extent of the map [west, east, south, north]
     ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=projection)
 
     # Add map features
-    land = cfeature.NaturalEarthFeature('physical', 'land', '10m',
-                                        edgecolor='face',
-                                        facecolor=cfeature.COLORS['land'])
-    ocean = cfeature.NaturalEarthFeature('physical', 'ocean', '10m',
-                                         edgecolor='face',
-                                         facecolor=cfeature.COLORS['water'])
-    coastline = cfeature.NaturalEarthFeature('physical', 'coastline', '10m',
-                                             edgecolor='black',
-                                             facecolor='none')
-    borders = cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m',
-                                           edgecolor='black',
-                                           facecolor='none')
-    rivers = cfeature.NaturalEarthFeature('physical', 'rivers_lake_centerlines', '10m',
-                                          edgecolor='blue',
-                                          facecolor='none')
-    roads = cfeature.NaturalEarthFeature('cultural', 'roads', '10m',
-                                         edgecolor='gray',
-                                         facecolor='none',
-                                         linewidth=0.5,
-                                         alpha=0.5)
-
-    ax.add_feature(land)
-    ax.add_feature(ocean)
-    ax.add_feature(coastline)
-    ax.add_feature(borders)
-    ax.add_feature(rivers)
-    ax.add_feature(roads)
-
-    # Optionally, add gridlines
-    gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.5)
-    gl.top_labels = False
-    gl.right_labels = False
-    gl.xlabel_style = {'size': 10}
-    gl.ylabel_style = {'size': 10}
+    ax.add_feature(cfeature.LAND)
+    ax.add_feature(cfeature.OCEAN)
+    ax.add_feature(cfeature.COASTLINE)
+    ax.add_feature(cfeature.BORDERS, linestyle=':')
+    ax.add_feature(cfeature.RIVERS)
 
     # Plot terminal nodes
-    terminals_plotted = False
     for node_id, (lat, lon) in node_coords.items():
         if nodes[node_id].type == "terminal":
-            # Plot terminal with blue circle
-            ax.plot(lon, lat, marker='o', markersize=8, color="blue",
-                    transform=ccrs.PlateCarree(),
-                    label="Terminal" if not terminals_plotted else "")
-            # Label the terminal
-            ax.text(lon + 0.005, lat + 0.005, f"{node_id}", fontsize=9, transform=ccrs.PlateCarree())
-            terminals_plotted = True
+            ax.plot(lon, lat, 'bo', markersize=6, transform=ccrs.PlateCarree())
+            ax.text(lon + 0.01, lat + 0.01, node_id, fontsize=8, transform=ccrs.PlateCarree())
 
-    # Assign unique colors to each barge using a colormap
-    num_barges = len(barges)
-    cmap = cm.get_cmap('tab20', num_barges)
+    # Assign unique colors to each barge
+    cmap = cm.get_cmap('tab20', len(barges))
     barge_colors = {barge_id: cmap(i) for i, barge_id in enumerate(barges.keys())}
 
-    # Prepare a dictionary to track the number of barges on each route
-    route_barges = {}
+    # Define edge start and end points for barges in the top-right corner
+    num_barges = len(barges)
+    edge_points_top = [
+        (lat_max, lon_min + (lon_max - lon_min) / 2 + i * (lon_max - lon_min) / (2 * num_barges))
+        for i in range(num_barges)
+    ]  # Right half of the top edge
+    edge_points_right = [
+        (lat_min + (lat_max - lat_min) / 2 + i * (lat_max - lat_min) / (2 * num_barges), lon_max)
+        for i in range(num_barges)
+    ]  # Top half of the right edge
+    barge_edges = {barge_id: edge_points_top[i] if i % 2 == 0 else edge_points_right[i]
+                   for i, barge_id in enumerate(barges.keys())}
+
+    # Plot barge routes
     x_ijk = variables.get("x_ijk", {})
+    for barge_id, routes in x_ijk.items():
+        # Skip barges with only one arc
+        if sum(1 for (_, _), var in routes.items() if hasattr(var, 'X') and var.X > 0.5) <= 1:
+            continue
 
-    for k, routes in x_ijk.items():
+        # Get the barge's start and end edge points
+        edge_point = barge_edges[barge_id]
+
+        # Collect route coordinates
+        route_coords = [edge_point]  # Start from the edge
         for (i, j), var in routes.items():
             if hasattr(var, 'X') and var.X > 0.5 and nodes[i].type == "terminal" and nodes[j].type == "terminal":
-                route = tuple(sorted([i, j]))
-                if route not in route_barges:
-                    route_barges[route] = []
-                route_barges[route].append(k)
+                route_coords.append(node_coords[i])
+                route_coords.append(node_coords[j])
+        route_coords.append(edge_point)  # End at the same edge point
 
-    # Define the randomized area in the top-right corner for starting points
-    # Define a smaller margin within the existing map margin
-    random_margin_lat = margin / 2
-    random_margin_lon = margin / 2
-    rand_lat_min = lat_max - random_margin_lat
-    rand_lat_max = lat_max
-    rand_lon_min = lon_max - random_margin_lon
-    rand_lon_max = lon_max
+        # Remove duplicate consecutive points
+        route_coords = [route_coords[0]] + [
+            coord for i, coord in enumerate(route_coords[1:]) if coord != route_coords[i]
+        ]
 
-    # Generate random starting points for each barge
-    barge_start_points = {}
-    for barge_id in barges.keys():
-        rand_lat = random.uniform(rand_lat_min, rand_lat_max)
-        rand_lon = random.uniform(rand_lon_min, rand_lon_max)
-        barge_start_points[barge_id] = (rand_lat, rand_lon)
+        # Extract latitudes and longitudes for plotting
+        lats = [coord[0] for coord in route_coords]
+        lons = [coord[1] for coord in route_coords]
 
-    # Extract and plot routes with arrows
-    for k, routes in x_ijk.items():
-        for (i, j), var in routes.items():
-            if hasattr(var, 'X') and var.X > 0.5 and nodes[i].type == "terminal" and nodes[j].type == "terminal":
-                # Get coordinates for the route
-                origin = node_coords[i]
-                destination = node_coords[j]
+        # Plot the route
+        ax.plot(
+            lons, lats,
+            color=barge_colors[barge_id],
+            linewidth=2,
+            alpha=0.8,
+            transform=ccrs.PlateCarree(),
+            label=f"Barge {barge_id}" if f"Barge {barge_id}" not in ax.get_legend_handles_labels()[1] else ""
+        )
 
-                # Get the barge's color
-                barge_color = barge_colors[k]
+        # Add arrows to indicate direction
+        for idx in range(len(lons) - 1):
+            ax.annotate(
+                '',
+                xy=(lons[idx + 1], lats[idx + 1]),
+                xytext=(lons[idx], lats[idx]),
+                arrowprops=dict(arrowstyle="->", color=barge_colors[barge_id], lw=1.5),
+                transform=ccrs.PlateCarree()
+            )
 
-                # Draw the route as a colored line
-                ax.plot(
-                    [origin[1], destination[1]],
-                    [origin[0], destination[0]],
-                    color=barge_color,
-                    linewidth=2,
-                    alpha=0.8,
-                    transform=ccrs.PlateCarree(),
-                    label=f"Barge {k}" if f"Barge {k}" not in ax.get_legend_handles_labels()[1] else ""
-                )
-
-                # Add an arrow to indicate direction for the route
-                ax.annotate(
-                    '',
-                    xy=(destination[1], destination[0]),
-                    xytext=(origin[1], origin[0]),
-                    arrowprops=dict(arrowstyle="->", color=barge_color, lw=1.5),
-                    transform=ccrs.PlateCarree()
-                )
-
-    # Create custom legend handles for barges
-    legend_handles = []
-    for barge_id in barges.keys():
-        legend_handles.append(Line2D([0], [0], color=barge_colors[barge_id], lw=2, label=f"Barge {barge_id}"))
-
-    # Add terminal handle if terminals were plotted
-    if terminals_plotted:
-        legend_handles.append(Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=8, label='Terminal'))
-
-    # Set title and labels
-    ax.set_title("Barge Routes with Terminals and Starting Lines", fontsize=16)
-
-    # Add the legend
-    ax.legend(handles=legend_handles, loc='upper right', title="Barges & Nodes", fontsize=10, title_fontsize=12)
+    # Add legend
+    ax.legend(loc='upper left', fontsize=10)
+    ax.set_title("Barge Routes with Terminals", fontsize=14)
 
     # Save the figure
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.show()
-    plt.close(fig)  # Close the figure to free memory
     print(f"Map saved as {output_file}")
+
+
 
 
 

@@ -67,8 +67,8 @@ def check_model_status(model):
             print('Optimization was stopped with status', status)
         exit(0)
 
-def random_generation_containers(nodes, node_coords, buffer_time=24*60):
-    container_amount = 100  # Number of containers to generate
+def random_generation_containers(nodes, node_coords,container_amount, buffer_time=24*60):
+     # Number of containers to generate
     containers_data = []
 
     n_depots = 5  # Node IDs 0-4
@@ -128,7 +128,7 @@ def random_generation_containers(nodes, node_coords, buffer_time=24*60):
 from geopy.distance import geodesic
 import random
 
-def construct_network():
+def construct_network(container_amount):
     """
     Constructs the transportation network by defining nodes, containers, arcs, barges, and trucks.
     Returns:
@@ -230,7 +230,7 @@ def construct_network():
     }
 
     # Define containers with their attributes
-    containers_data = random_generation_containers(nodes, node_coords)
+    containers_data = random_generation_containers(nodes, node_coords,container_amount)
 
     # Initialize containers dictionary
     containers = {}
@@ -258,7 +258,7 @@ def construct_network():
 
     # Define barges with their capacities and fixed costs
     barges_data = [
-        (1, 104, 3600, 0),  # Barge 1: Capacity=104, Fixed Cost=3600
+        (1, 104, 3600, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
         (2, 99, 3500, 1),
         (3, 81, 2800, 2),
         (4, 52, 1800, 3),
@@ -367,7 +367,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     Or = {k: barges[k].origin for k in barges.keys()} #origin for each barge
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
-    L = 15     # Handling time per container in hours (e.g., loading/unloading time)
+    L = 15     # Handling time per container in minutes (e.g., loading/unloading time)
     gamma = 50 # Penalty cost for visiting sea terminals
 
     #=========================================================================================================================
@@ -735,16 +735,17 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     #  Output Results and Visualization
     #=========================================================================================================================
 
+    output_base = f"random_generation_C_{container_amount}_"
     # Print the optimization results: objective value, container allocations, and barge routes
     print_model_result(model, variables, barges, containers)
 
     # Visualize the barge and truck routes on a map
-    visualize_routes_static(nodes, barges, variables, containers, node_coords)
-    visualize_routes(nodes, barges, variables, containers, node_coords,"folium_map_random.html")
+    visualize_routes_static(nodes, barges, variables, containers, node_coords,output_filename_full=output_base+"route_including_depot.png")
+    visualize_routes(nodes, barges, variables, containers, node_coords,file_name=output_base+"interactive_route.html")
     #
     # # Visualize the schedule in gantt chart format of container movements
-    visualize_schedule_random(nodes, barges, variables, containers)
-    visualize_routes_terminals(nodes, barges, variables, containers, node_coords, "barge_routes.png")
+    visualize_schedule_random(nodes, barges, variables, containers,output_file=output_base+"gantt_schedule.png")
+    visualize_routes_terminals(nodes, barges, variables, containers, node_coords, output_file=output_base+"route_terminals.png")
 
 
 
@@ -752,5 +753,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
 
 if __name__ == "__main__":
-    nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy = construct_network()
+    container_amount = 100
+    nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy = construct_network(container_amount=container_amount)
     barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy)
