@@ -1,12 +1,11 @@
-import tkinter as tk
-from tkinter import simpledialog, messagebox, filedialog
-from tkinter import ttk
-from PIL import Image, ImageTk
-import json
-import os
-from math import sqrt
-from gurobipy import *
-import webbrowser
+
+from collections import defaultdict
+import threading
+import time
+import queue
+import colorsys  # Import colorsys for color generation
+import random  # If needed for other random functionalities
+
 
 # Define data classes
 class Node:
@@ -14,7 +13,7 @@ class Node:
         self.id = node_id
         self.x = x  # Pixel x-coordinate on the map
         self.y = y  # Pixel y-coordinate on the map
-        self.type = node_type  # 'depot' or 'terminal'
+        self.type = node_type  # 'depot', 'dummy', or 'terminal'
 
 class Container:
     def __init__(self, container_id, size, release_date, opening_date, closing_date, origin, destination, container_type):
@@ -28,15 +27,22 @@ class Container:
         self.type = container_type  # 'I' or 'E'
 
 class Barge:
-    def __init__(self, barge_id, capacity, fixed_cost):
+    def __init__(self, barge_id, capacity, fixed_cost, origin):
         self.id = barge_id
         self.capacity = capacity
         self.fixed_cost = fixed_cost
+        self.origin = origin  # Origin depot node ID
 
 class Truck:
-    def __init__(self, truck_id, cost_per_container):
-        self.id = truck_id
+    def __init__(self, cost_per_container):
         self.cost_per_container = cost_per_container
+
+class Arc:
+    def __init__(self, origin, destination, travel_time):
+        self.origin = origin                  # Origin node ID
+        self.destination = destination        # Destination node ID
+        self.travel_time = travel_time        # Tij: Travel time in minutes between origin and destination
+
 
 # Main Application Class
 class NetworkCreatorApp:
@@ -49,22 +55,85 @@ class NetworkCreatorApp:
         self.containers = {}
         self.barges = {}
         self.trucks = {}
+        self.depot_to_dummy = {}
         self.next_node_id = 0
         self.next_container_id = 1
         self.next_barge_id = 1
-        self.next_truck_id = 1
+        self.next_truck_id = 11  # Start from 11 since trucks are predefined with IDs 9 and 10
+
+        # Predefine trucks
+        self.predefine_trucks()
+        # Define a list of distinct colors
+        self.color_list = [
+            'red', 'green', 'blue', 'orange', 'purple',
+            'cyan', 'magenta', 'yellow', 'brown', 'pink',
+            'lime', 'teal', 'lavender', 'maroon', 'navy',
+            'olive', 'coral', 'grey', 'black', 'gold'
+        ]
+
+        # Initialize a dictionary to map barge IDs to colors
+        self.barge_colors = {}
+
+
+        # Create the main frames
+        self.create_main_frames()
 
         # Load map
         self.load_map()
 
-        # Create menus
+        # Create menus and buttons
         self.create_menus()
-
-        # Create buttons for data input and optimization
         self.create_buttons()
 
         # Bind click event
         self.canvas.bind("<Button-1>", self.on_canvas_click)
+
+
+    def create_main_frames(self):
+        """
+        Creates the main frames for the canvas and the button panel.
+        """
+        # Frame for the map and its scrollbars
+        self.map_frame = tk.Frame(self.master)
+        self.map_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Vertical scrollbar
+        self.v_scrollbar = tk.Scrollbar(self.map_frame, orient=tk.VERTICAL)
+        self.v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Horizontal scrollbar
+        self.h_scrollbar = tk.Scrollbar(self.map_frame, orient=tk.HORIZONTAL)
+        self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Canvas
+        self.canvas = tk.Canvas(
+            self.map_frame,
+            bg="white",
+            yscrollcommand=self.v_scrollbar.set,
+            xscrollcommand=self.h_scrollbar.set,
+            scrollregion=(0, 0, 1000, 1000)  # Initial scroll region; will be updated when image is loaded
+        )
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Configure scrollbars
+        self.v_scrollbar.config(command=self.canvas.yview)
+        self.h_scrollbar.config(command=self.canvas.xview)
+
+        # Frame for buttons on the right
+        self.button_frame = tk.Frame(self.master, padx=10, pady=10)
+        self.button_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+
+    def predefine_trucks(self):
+        # Predefine Truck 1
+        truck1 = Truck(cost_per_container=150)  # Example values
+        self.trucks[9] = truck1
+
+        # Predefine Truck 2
+        truck2 = Truck(cost_per_container=200)  # Example values
+        self.trucks[10] = truck2
+
+        messagebox.showinfo("Predefined Trucks", "Two trucks (ID 9 and ID 10) have been initialized.")
 
     def load_map(self):
         # Prompt user to select a PNG map
@@ -78,9 +147,8 @@ class NetworkCreatorApp:
         self.map_image = Image.open(map_path)
         self.map_photo = ImageTk.PhotoImage(self.map_image)
 
-        # Create Canvas
-        self.canvas = tk.Canvas(self.master, width=self.map_photo.width(), height=self.map_photo.height(), bg="white")
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Update the scroll region to the size of the image
+        self.canvas.config(scrollregion=(0, 0, self.map_photo.width(), self.map_photo.height()))
 
         # Display the image on the canvas
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.map_photo)
@@ -111,13 +179,17 @@ class NetworkCreatorApp:
         add_container_btn = tk.Button(button_frame, text="Add Containers", command=self.add_container)
         add_container_btn.pack(pady=5, fill=tk.X)
 
+        # Button to generate random containers
+        generate_random_containers_btn = tk.Button(button_frame, text="Generate Random Containers", command=self.generate_random_containers)
+        generate_random_containers_btn.pack(pady=5, fill=tk.X)  # New button
+
         # Button to add barge
         add_barge_btn = tk.Button(button_frame, text="Add Barge", command=self.add_barge)
         add_barge_btn.pack(pady=5, fill=tk.X)
 
-        # Button to add truck
-        add_truck_btn = tk.Button(button_frame, text="Add Truck", command=self.add_truck)
-        add_truck_btn.pack(pady=5, fill=tk.X)
+        # Remove or disable the "Add Truck" button since trucks are predefined
+        # Option 1: Remove the button
+        # pass  # No button added for adding trucks
 
         # Button to view data
         view_data_btn = tk.Button(button_frame, text="View Data", command=self.view_data)
@@ -128,8 +200,11 @@ class NetworkCreatorApp:
         solve_model_btn.pack(pady=20, fill=tk.X)
 
     def on_canvas_click(self, event):
-        x, y = event.x, event.y
+        # Get the absolute coordinates accounting for scrollbars
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
 
+        # Continue with adding the node using the absolute coordinates
         # Prompt user for node type
         node_type = simpledialog.askstring("Node Type", "Enter node type ('depot' or 'terminal'):")
         if node_type not in ['depot', 'terminal']:
@@ -143,9 +218,27 @@ class NetworkCreatorApp:
         self.draw_node(node)
         messagebox.showinfo("Node Added", f"Node {node_id} added as {node_type}.")
 
+        if node_type == 'depot':
+            # Automatically create a dummy depot
+            dummy_node_id = self.next_node_id
+            self.next_node_id += 1
+            # Position the dummy depot slightly offset from the real depot for visibility
+            dummy_x = x + 20  # Offset by 20 pixels; adjust as needed
+            dummy_y = y + 20
+            dummy_node = Node(dummy_node_id, dummy_x, dummy_y, 'depot_arr')
+            self.nodes[dummy_node_id] = dummy_node
+            self.depot_to_dummy[node_id] = dummy_node_id
+            self.draw_node(dummy_node)
+            messagebox.showinfo("Dummy Depot Added", f"Dummy Depot {dummy_node_id} added for Depot {node_id}.")
+
     def draw_node(self, node):
         # Define colors based on node type
-        color = 'blue' if node.type == 'depot' else 'green'
+        if node.type == 'depot':
+            color = 'blue'
+        elif node.type == 'depot_arr':
+            color = 'orange'  # Different color for dummy depots
+        else:
+            color = 'green'
         radius = 5
         self.canvas.create_oval(node.x - radius, node.y - radius, node.x + radius, node.y + radius, fill=color, outline='black')
         self.canvas.create_text(node.x, node.y - 10, text=str(node.id), fill='black', font=('Arial', 10, 'bold'))
@@ -154,7 +247,7 @@ class NetworkCreatorApp:
         """
         Returns a list of node IDs filtered by the specified node type.
         Args:
-            node_type (str): 'depot' or 'terminal'
+            node_type (str): 'depot', 'dummy', or 'terminal'
         Returns:
             List of node IDs matching the type.
         """
@@ -219,12 +312,12 @@ class NetworkCreatorApp:
 
             # Origin node
             origin_var = tk.StringVar(scrollable_frame)
-            origin_menu = tk.OptionMenu(scrollable_frame, origin_var, *self.get_node_ids_by_type('depot'))
+            origin_menu = tk.OptionMenu(scrollable_frame, origin_var, *self.get_node_ids_by_type('depot') + self.get_node_ids_by_type('depot_arr'))
             origin_menu.grid(row=row, column=4, padx=1, pady=1, sticky='nsew')
 
             # Destination node
             destination_var = tk.StringVar(scrollable_frame)
-            destination_menu = tk.OptionMenu(scrollable_frame, destination_var, *self.get_node_ids_by_type('terminal'))
+            destination_menu = tk.OptionMenu(scrollable_frame, destination_var, *self.get_node_ids_by_type('terminal') + self.get_node_ids_by_type('depot_arr'))
             destination_menu.grid(row=row, column=5, padx=1, pady=1, sticky='nsew')
 
             # Container type
@@ -242,24 +335,27 @@ class NetworkCreatorApp:
                 container_type = type_var.get()
                 # Update origin and destination menus based on container type
                 if container_type == 'E':
-                    # Export: Origin = depot, Destination = terminal
+                    # Export: Origin = depot or dummy, Destination = terminal
                     origin_menu['menu'].delete(0, 'end')
-                    for depot_id in self.get_node_ids_by_type('depot'):
+                    for depot_id in self.get_node_ids_by_type('depot') + self.get_node_ids_by_type('depot_arr'):
                         origin_menu['menu'].add_command(label=depot_id, command=lambda value=depot_id: origin_var.set(value))
                     destination_menu['menu'].delete(0, 'end')
                     for terminal_id in self.get_node_ids_by_type('terminal'):
                         destination_menu['menu'].add_command(label=terminal_id, command=lambda value=terminal_id: destination_var.set(value))
                 elif container_type == 'I':
-                    # Import: Origin = terminal, Destination = depot
+                    # Import: Origin = terminal, Destination = dummy depots
                     origin_menu['menu'].delete(0, 'end')
                     for terminal_id in self.get_node_ids_by_type('terminal'):
                         origin_menu['menu'].add_command(label=terminal_id, command=lambda value=terminal_id: origin_var.set(value))
                     destination_menu['menu'].delete(0, 'end')
-                    for depot_id in self.get_node_ids_by_type('depot'):
-                        destination_menu['menu'].add_command(label=depot_id, command=lambda value=depot_id: destination_var.set(value))
+                    for dummy_id in self.get_node_ids_by_type('depot_arr'):
+                        destination_menu['menu'].add_command(label=dummy_id, command=lambda value=dummy_id: destination_var.set(value))
 
             # Bind the type_var to the on_type_change function
             type_var.trace('w', on_type_change)
+
+            # Initialize menus based on default type 'E'
+            on_type_change()
 
             # Append the entries to the list
             container_entries.append({
@@ -313,11 +409,13 @@ class NetworkCreatorApp:
                 origin = int(origin)
                 destination = int(destination)
                 if container_type == 'E':
-                    if self.nodes[origin].type != 'depot' or self.nodes[destination].type != 'terminal':
-                        raise ValueError(f"Container {idx}: Export containers must originate from a depot and be destined to a terminal.")
+                    # For export, destination should not be a dummy depot
+                    if self.nodes[origin].type not in ['depot', 'depot_arr'] or self.nodes[destination].type != 'terminal':
+                        raise ValueError(f"Container {idx}: Export containers must originate from a depot/dummy and be destined to a terminal.")
                 elif container_type == 'I':
-                    if self.nodes[origin].type != 'terminal' or self.nodes[destination].type != 'depot':
-                        raise ValueError(f"Container {idx}: Import containers must originate from a terminal and be destined to a depot.")
+                    # For import, origin should be a terminal and destination a dummy depot
+                    if self.nodes[origin].type != 'terminal' or self.nodes[destination].type != 'depot_arr':
+                        raise ValueError(f"Container {idx}: Import containers must originate from a terminal and be destined to a dummy depot.")
                     release = None  # For import containers, release date is None
 
                 # Validate release, opening, and closing dates
@@ -335,6 +433,10 @@ class NetworkCreatorApp:
                 if not closing:
                     raise ValueError(f"Container {idx}: Closing date is required.")
                 closing = int(closing)
+
+                # Additional validation: Closing date must be after opening date
+                if closing <= opening:
+                    raise ValueError(f"Container {idx}: Closing date must be after opening date.")
 
                 # Create and add the container
                 container_id = self.next_container_id
@@ -363,52 +465,57 @@ class NetworkCreatorApp:
         fixed_cost_entry = tk.Entry(barge_window)
         fixed_cost_entry.grid(row=1, column=1, padx=5, pady=5, sticky='w')
 
-        # Submit button
-        submit_btn = tk.Button(barge_window, text="Add", command=lambda: self.submit_barge(barge_window, capacity_entry.get(), fixed_cost_entry.get()))
-        submit_btn.grid(row=2, column=0, columnspan=2, pady=10)
+        tk.Label(barge_window, text="Origin Depot ID:").grid(row=2, column=0, padx=5, pady=5, sticky='e')
 
-    def submit_barge(self, window, capacity, fixed_cost):
+        # Origin Depot Selection
+        depots = self.get_node_ids_by_type('depot')  # List of depots as strings
+        if not depots:
+            messagebox.showerror("No Depots", "Please add depots before adding a barge.")
+            barge_window.destroy()
+            return
+
+        origin_var = tk.StringVar(barge_window)
+        origin_menu = tk.OptionMenu(barge_window, origin_var, *depots)
+        origin_menu.grid(row=2, column=1, padx=5, pady=5, sticky='w')
+        origin_var.set(depots[0])  # Set default to first depot
+
+        # Submit button
+        submit_btn = tk.Button(barge_window, text="Add", command=lambda: self.submit_barge(barge_window, capacity_entry.get(), fixed_cost_entry.get(), origin_var.get()))
+        submit_btn.grid(row=3, column=0, columnspan=2, pady=10)
+
+    def submit_barge(self, window, capacity, fixed_cost, origin):
         try:
             capacity = float(capacity)
             fixed_cost = float(fixed_cost)
+            origin = int(origin)
         except ValueError:
             messagebox.showerror("Invalid Input", "Please enter valid barge data.")
             return
 
+        # Ensure the origin is a depot
+        if self.nodes[origin].type != 'depot':
+            messagebox.showerror("Invalid Origin", "Barge origin must be a depot.")
+            return
+
         barge_id = self.next_barge_id
         self.next_barge_id += 1
-        barge = Barge(barge_id, capacity, fixed_cost)
+        barge = Barge(barge_id, capacity, fixed_cost, origin)
         self.barges[barge_id] = barge
-        messagebox.showinfo("Barge Added", f"Barge {barge_id} added.")
+        messagebox.showinfo("Barge Added", f"Barge {barge_id} added with Origin Depot {origin}.")
         window.destroy()
 
     def add_truck(self):
-        # Create a new window for truck input
-        truck_window = tk.Toplevel(self.master)
-        truck_window.title("Add Truck")
+        # Trucks are predefined; no addition allowed
+        messagebox.showinfo("Add Truck", "Only two trucks (ID 1 and ID 2) are allowed. Please use 'Edit Trucks' to modify their details.")
 
-        # Truck attributes
-        tk.Label(truck_window, text="Cost per Container:").grid(row=0, column=0, padx=5, pady=5, sticky='e')
-        cost_entry = tk.Entry(truck_window)
-        cost_entry.grid(row=0, column=1, padx=5, pady=5, sticky='w')
 
-        # Submit button
-        submit_btn = tk.Button(truck_window, text="Add", command=lambda: self.submit_truck(truck_window, cost_entry.get()))
-        submit_btn.grid(row=1, column=0, columnspan=2, pady=10)
+    def add_truck_button_disabled(self):
+        # Optionally, hide or disable the "Add Truck" button
+        pass  # Already handled by not creating the button
 
-    def submit_truck(self, window, cost):
-        try:
-            cost = float(cost)
-        except ValueError:
-            messagebox.showerror("Invalid Input", "Please enter a valid cost.")
-            return
-
-        truck_id = self.next_truck_id
-        self.next_truck_id += 1
-        truck = Truck(truck_id, cost)
-        self.trucks[truck_id] = truck
-        messagebox.showinfo("Truck Added", f"Truck {truck_id} added.")
-        window.destroy()
+    def add_truck(self):
+        # Trucks are predefined; no addition allowed
+        messagebox.showinfo("Add Truck", "Only two trucks (ID 1 and ID 2) are allowed. Please use 'Edit Trucks' to modify their details.")
 
     def view_data(self):
         # Create a new window to display all data
@@ -453,7 +560,7 @@ class NetworkCreatorApp:
         barges_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         barges_text.config(yscrollcommand=barges_scroll.set)
         for barge in self.barges.values():
-            barges_text.insert(tk.END, f"ID: {barge.id}, Capacity: {barge.capacity}, Fixed Cost: {barge.fixed_cost}\n")
+            barges_text.insert(tk.END, f"ID: {barge.id}, Capacity: {barge.capacity}, Fixed Cost: {barge.fixed_cost}, Origin Depot: {barge.origin}\n")
 
         # Trucks Tab
         trucks_frame = ttk.Frame(notebook)
@@ -464,7 +571,7 @@ class NetworkCreatorApp:
         trucks_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         trucks_text.config(yscrollcommand=trucks_scroll.set)
         for truck in self.trucks.values():
-            trucks_text.insert(tk.END, f"ID: {truck.id}, Cost per Container: {truck.cost_per_container}\n")
+            trucks_text.insert(tk.END, f"Cost per Container: {truck.cost_per_container}\n")
 
     def save_network(self):
         # Prompt user to select a file to save
@@ -487,11 +594,13 @@ class NetworkCreatorApp:
             } for container_id, container in self.containers.items()},
             "barges": {barge_id: {
                 "capacity": barge.capacity,
-                "fixed_cost": barge.fixed_cost
+                "fixed_cost": barge.fixed_cost,
+                "origin": barge.origin  # Save origin depot ID
             } for barge_id, barge in self.barges.items()},
             "trucks": {truck_id: {
                 "cost_per_container": truck.cost_per_container
             } for truck_id, truck in self.trucks.items()},
+            "depot_to_dummy": self.depot_to_dummy,  # Save depot_to_dummy mapping
             "next_ids": {
                 "node": self.next_node_id,
                 "container": self.next_container_id,
@@ -505,17 +614,20 @@ class NetworkCreatorApp:
             json.dump(data, f, indent=4)
         messagebox.showinfo("Saved", f"Network data saved to {save_path}.")
 
-
     def clear_data(self):
         # Clear all data
         self.nodes.clear()
         self.containers.clear()
         self.barges.clear()
         self.trucks.clear()
+        self.depot_to_dummy.clear()  # Clear depot_to_dummy mapping
         self.next_node_id = 0
         self.next_container_id = 1
         self.next_barge_id = 1
-        self.next_truck_id = 1
+        self.next_truck_id = 11  # Reset to 3 since 1 and 2 are predefined
+
+        # Re-predefine the two trucks
+        self.predefine_trucks()
 
         # Clear canvas (remove all except the map image)
         self.canvas.delete("all")
@@ -538,281 +650,565 @@ class NetworkCreatorApp:
             messagebox.showerror("No Trucks", "Please add trucks before solving the model.")
             return
 
-        try:
-            # Construct the optimization model
-            nodes_dict, arcs_list = self.construct_arcs()
-            model = self.build_and_solve_model(nodes_dict, arcs_list)
-            if model is None:
-                return  # Model was infeasible or an error occurred
-            # Extract variables
-            variables = self.extract_variables(model, nodes_dict, arcs_list)
-            # Display results
-            self.display_results(model, variables)
-            # Visualize routes
-            self.visualize_routes(None, variables)  # No need to save as image
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred during optimization:\n{str(e)}")
-
-
-    def build_and_solve_model(self, nodes, arcs):
-        """
-        Builds and solves the optimization model using Gurobi.
-        Args:
-            nodes (dict): Dictionary of Node objects keyed by node ID.
-            arcs (list): List of Arc tuples representing possible routes (origin, destination, travel_time).
-        Returns:
-            model (gurobipy.Model): The optimized Gurobi model, or None if infeasible.
-        """
-        model = Model("TransportationOptimization")
-
-        # Big M
-        M = 10000  # A large constant used in Big M method for conditional constraints
-
-        # Define sets
-        N = list(nodes.keys())                         # Set of all node IDs
-        C = list(self.containers.keys())               # Set of all container IDs
-        E = [c.id for c in self.containers.values() if c.type == 'E']  # Export containers
-        I = [c.id for c in self.containers.values() if c.type == 'I']  # Import containers
-        K = list(self.barges.keys()) + ['T']                # Set of barges and 'T' representing trucks
-        KB = list(self.barges.keys())                       # Set of barges only
-
-        # Define parameters
-        Wc = {c.id: c.size for c in self.containers.values()}  # Wc: Container sizes
-        Rc = {c.id: c.release_date for c in self.containers.values() if c.type == 'E'}  # Rc: Release dates for export containers
-        Oc = {c.id: c.opening_date for c in self.containers.values()}  # Oc: Opening dates for all containers
-        Dc = {c.id: c.closing_date for c in self.containers.values()}  # Dc: Closing dates for all containers
-
-        # Zcj: Indicator if container c is associated with node j
-        Zcj = {}
-        for c in self.containers.values():
-            if c.type == 'E':
-                Zcj[c.id, c.destination] = 1  # Export containers are associated with their destination
-            else:
-                Zcj[c.id, c.origin] = 1      # Import containers are associated with their origin
-
-        HBk = {k: self.barges[k].fixed_cost for k in self.barges.keys()}  # HBk: Fixed costs for each barge
-        Qk = {k: self.barges[k].capacity for k in self.barges.keys()}     # Qk: Capacities for each barge
-        Tij = {(arc[0], arc[1]): arc[2] for arc in arcs}  # Tij: Travel times between nodes
-
-        # Handling time per container (minutes)
-        L = 0.5
-        gamma = 50   # Penalty cost for visiting sea terminals unnecessarily
-
-        # Define variables
-
-        # f_ck: Binary variable indicating if container c is assigned to vehicle k
-        f_ck = {}
-        for c in C:
-            for k in K:
-                f_ck[c, k] = model.addVar(vtype=GRB.BINARY, name=f"f_{c}_{k}")
-
-        # x_ijk: Binary variable indicating if barge k traverses arc (i, j)
-        x_ijk = {}
-        for k in KB:
-            x_ijk[k] = {}
-            for arc in arcs:
-                i, j, _ = arc
-                x_ijk[k][(i, j)] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{j}_{k}")
-
-        # p_jk: Continuous variable representing import quantities loaded by barge k at terminal j
-        # d_jk: Continuous variable representing export quantities unloaded by barge k at terminal j
-        p_jk = {}
-        d_jk = {}
-        for k in KB:
-            for j in N:
-                if self.nodes[j].type == 'terminal':
-                    p_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"p_{j}_{k}")
-                    d_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"d_{j}_{k}")
-
-        # y_ijk: Continuous variable for import containers on arc (i, j) by barge k
-        # z_ijk: Continuous variable for export containers on arc (i, j) by barge k
-        y_ijk = {}
-        z_ijk = {}
-        for k in KB:
-            y_ijk[k] = {}
-            z_ijk[k] = {}
-            for arc in arcs:
-                i, j, _ = arc
-                y_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"y_{i}_{j}_{k}")
-                z_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"z_{i}_{j}_{k}")
-
-        # t_jk: Continuous variable representing the arrival time of barge k at node j
-        t_jk = {}
-        for k in KB:
-            for j in N:
-                if self.nodes[j].type == 'terminal' or self.nodes[j].type == 'depot':
-                    t_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"t_{j}_{k}")
-
-        # Set the objective function
-        # Minimize total cost: truck costs, barge fixed costs, barge travel time costs, penalties
-        model.setObjective(
-            quicksum(
-                f_ck[c, 'T'] * self.trucks[k].cost_per_container
-                for c in C
-                for k in self.trucks.keys()
-                if (c, k) in f_ck and f_ck[c, k]
-            ) +  # Truck costs
-            quicksum(
-                x_ijk[k][(i, j)] * HBk[k]
-                for k in KB for (i, j) in x_ijk[k]
-            ) +  # Barge fixed costs
-            quicksum(
-                Tij[i, j] * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k]
-            ) +  # Barge travel time costs
-            quicksum(
-                gamma * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k] if self.nodes[j].type == 'terminal'
-            ),  # Penalty for visiting sea terminals unnecessarily
-            GRB.MINIMIZE
+        # Prompt user for maximum optimization time in seconds
+        max_time = simpledialog.askinteger(
+            "Max Optimization Time",
+            "Enter the maximum optimization time in seconds:",
+            minvalue=10,  # Minimum 10 sec
+            maxvalue=3600  # Maximum 1 hour
         )
+        if not max_time:
+            return  # User cancelled the dialog
 
-        # Define Constraints
+        # Create a progress window
+        progress_window = tk.Toplevel(self.master)
+        progress_window.title("Solving Model")
+        progress_window.geometry("400x100")
+        tk.Label(progress_window, text="Optimization in progress...").pack(pady=10)
+        progress_bar = ttk.Progressbar(progress_window, orient="horizontal", length=300, mode="determinate")
+        progress_bar.pack(pady=10)
+        progress_bar["maximum"] = max_time
+        progress_bar["value"] = 0
 
-        # (1) Each container is allocated to exactly one barge or truck
-        for c in C:
-            model.addConstr(
-                quicksum(f_ck[c, k] for k in K) == 1,
-                name=f"Assignment_{c}"
-            )
+        # Event to signal optimization completion
+        opt_done = threading.Event()
 
-        # (2) Flow conservation for x_ijk (Barge Routes)
-        for k in KB:
-            # Identify depots
-            depots = [node.id for node in self.nodes.values() if node.type == 'depot']
-            for depot in depots:
-                # Each barge can depart from a depot to at most one outgoing arc
-                model.addConstr(
-                    quicksum(x_ijk[k][(depot, j)] for j in N if j != depot and (depot, j) in x_ijk[k]) <= 1,
-                    name=f"Depart_{k}_{depot}"
-                )
-            for i in N:
-                if i not in depots:
-                    # For non-depot nodes, ensure flow conservation
-                    model.addConstr(
-                        quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in x_ijk[k]) -
-                        quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in x_ijk[k]) == 0,
-                        name=f"Flow_{i}_{k}"
-                    )
+        # Dictionary to store optimization results
+        self.optimization_results = {}
 
-        # (3) Import quantities loaded by barge k at sea terminal j
-        for k in KB:
-            for j in N:
-                if self.nodes[j].type == 'terminal':
-                    model.addConstr(
-                        p_jk[j, k] == quicksum(
-                            Wc[c] * Zcj.get((c, j), 0) * f_ck[c, k]
-                            for c in I
-                        ),
-                        name=f"Import_{j}_{k}"
-                    )
+        # Define the optimization thread
+        def optimization_thread():
+            try:
+                nodes_dict, arcs_list = self.construct_arcs()
+                model, variables = self.build_and_solve_model(nodes_dict, arcs_list, max_time)
+                if model is not None and variables is not None:
+                    self.optimization_results['model'] = model
+                    self.optimization_results['variables'] = variables
+            except Exception as e:
+                self.optimization_results['error'] = str(e)
+            finally:
+                opt_done.set()
 
-        # (4) Export quantities unloaded by barge k at sea terminal j
-        for k in KB:
-            for j in N:
-                if self.nodes[j].type == 'terminal':
-                    model.addConstr(
-                        d_jk[j, k] == quicksum(
-                            Wc[c] * Zcj.get((c, j), 0) * f_ck[c, k]
-                            for c in E
-                        ),
-                        name=f"Export_{j}_{k}"
-                    )
+        # Start the optimization in a separate thread
+        thread = threading.Thread(target=optimization_thread)
+        thread.start()
 
-        # (5) Flow equations for y_ijk (import containers)
-        for k in KB:
-            for j in N:
-                if self.nodes[j].type == 'terminal':
-                    inflow = quicksum(y_ijk[k][(j, i)] for i in N if i != j and (j, i) in y_ijk[k])
-                    outflow = quicksum(y_ijk[k][(i, j)] for i in N if i != j and (i, j) in y_ijk[k])
-                    model.addConstr(
-                        inflow - outflow == p_jk[j, k],
-                        name=f"ImportFlow_{j}_{k}"
-                    )
+        # Start time tracking
+        start_time = time.time()
 
-        # (6) Flow equations for z_ijk (export containers)
-        for k in KB:
-            for j in N:
-                if self.nodes[j].type == 'terminal':
-                    inflow = quicksum(z_ijk[k][(i, j)] for i in N if i != j and (i, j) in z_ijk[k])
-                    outflow = quicksum(z_ijk[k][(j, i)] for i in N if i != j and (j, i) in z_ijk[k])
-                    model.addConstr(
-                        inflow - outflow == d_jk[j, k],
-                        name=f"ExportFlow_{j}_{k}"
-                    )
+        # Function to update the progress bar
+        def update_progress():
+            if opt_done.is_set():
+                progress_bar["value"] = max_time
+                progress_window.destroy()
+                error = self.optimization_results.get('error')
+                if error:
+                    messagebox.showerror("Optimization Error", f"An error occurred:\n{error}")
+                    return
+                model = self.optimization_results.get('model')
+                variables = self.optimization_results.get('variables')
+                if model and variables:
+                    if model.Status == GRB.OPTIMAL:
+                        messagebox.showinfo("Optimization Completed", "An optimal solution was found.")
+                    elif model.Status == GRB.TIME_LIMIT and model.SolCount > 0:
+                        messagebox.showwarning("Time Limit Reached",
+                                               "Optimization reached the time limit. A feasible solution was found.")
+                    # Display results regardless of status
+                    self.display_results(model, variables)
+                    self.visualize_routes(variables)
+                return
+            else:
+                elapsed_time = time.time() - start_time
+                progress_bar["value"] = min(elapsed_time, max_time)
+                if elapsed_time < max_time:
+                    self.master.after(1000, update_progress)  # Update every second
+                else:
+                    # Time limit reached; Gurobi should have stopped
+                    progress_window.destroy()
+                    # Handle cases where optimization might not have set opt_done yet
+                    if not opt_done.is_set():
+                        messagebox.showwarning("Time Limit Reached", "Optimization reached the maximum time limit.")
+                        opt_done.set()
+                    return
 
-        # (7) Capacity constraints for barges on each arc
-        for k in KB:
-            for arc in arcs:
-                i, j, _ = arc
-                if (i, j) in x_ijk[k]:
-                    model.addConstr(
-                        y_ijk[k][(i, j)] + z_ijk[k][(i, j)] <= Qk[k] * x_ijk[k][(i, j)],
-                        name=f"Capacity_{i}_{j}_{k}"
-                    )
+        # Initiate the progress bar update loop
+        update_progress()
 
-        # (8) Barge departure time after release of export containers
-        for c in E:
+    def build_and_solve_model(self, nodes, arcs,max_time):
+        try:
+            logging.info("Initializing the Gurobi model...")
+            model = Model("BargeScheduling")
+
+            # Big M
+            M = 2000  # A large constant used in Big M method for conditional constraints
+            logging.debug(f"Big M value set to {M}")
+
+            # Define sets
+            N = list(nodes.keys())  # Set of all node IDs
+            C = list(self.containers.keys())  # Set of all container IDs
+            E = [c.id for c in self.containers.values() if c.type == 'E']  # Export containers
+            I = [c.id for c in self.containers.values() if c.type == 'I']  # Import containers
+            K = list(self.barges.keys()) + [9, 10]  # Set of barges and trucks (IDs 1 and 2)
+            KB = list(self.barges.keys())  # Set of barges only
+
+            logging.debug(
+                f"Sets defined - Nodes: {N}, Containers: {C}, Export Containers: {E}, Import Containers: {I}, Vehicles: {K}, Barges: {KB}")
+
+            # Define parameters
+            Wc = {c.id: c.size for c in self.containers.values()}  # Wc: Container sizes
+            Rc = {c.id: c.release_date for c in self.containers.values() if
+                  c.type == 'E'}  # Rc: Release dates for export containers
+            Oc = {c.id: c.opening_date for c in self.containers.values()}  # Oc: Opening dates for all containers
+            Dc = {c.id: c.closing_date for c in self.containers.values()}  # Dc: Closing dates for all containers
+
+            logging.debug("Parameters defined - Wc, Rc, Oc, Dc")
+
+            # Zcj: Indicator if container c is associated with node j
+            Zcj = {}
+            for c in self.containers.values():
+                for j in N:
+                    if c.origin == j:
+                        Zcj[c.id, j] = 1
+                    elif c.destination == j:
+                        Zcj[c.id, j] = 1
+                    else:
+                        Zcj[c.id, j] = 0
+            logging.debug("Zcj indicators set for container-node associations")
+
+            HBk = {k: self.barges[k].fixed_cost for k in self.barges.keys()}  # HBk: Fixed costs for each barge
+            Qk = {k: self.barges[k].capacity for k in self.barges.keys()}  # Qk: Capacities for each barge
+            Or = {k: self.barges[k].origin for k in self.barges.keys()}  # Origin for each barge
+
+            logging.debug("Barge parameters defined - HBk, Qk, Or")
+
+            # depot_to_dummy mapping
+            depot_to_dummy = self.depot_to_dummy  # Assuming it's already populated
+            logging.debug(f"Depot to Dummy Depot mapping: {depot_to_dummy}")
+
+            # Update arcs_list to include only Arc objects
+            arcs_list = arcs  # List of Arc instances
+            logging.debug(f"Number of arcs constructed: {len(arcs_list)}")
+
+            Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
+            logging.debug("Travel times (Tij) between nodes computed")
+
+            # Handling time and penalty
+            L = 20  # Handling time per container in hours (e.g., loading/unloading time)
+            gamma = 50  # Penalty cost for visiting sea terminals
+            logging.debug(f"Handling time (L): {L} hours, Penalty (gamma): {gamma}")
+
+            # =========================================================================================================================
+            #  Define Decision Variables
+            # =========================================================================================================================
+
+            logging.info("Defining decision variables...")
+
+            # f_ck: Binary variable indicating if container c is assigned to vehicle k
+            f_ck = {}
+            for c in C:
+                for k in K:
+                    f_ck[c, k] = model.addVar(vtype=GRB.BINARY, name=f"f_{c}_{k}")
+            logging.debug(f"Defined f_ck variables for {len(f_ck)} container-vehicle pairs")
+
+            # x_ijk: Binary variable indicating if barge k traverses arc (i, j)
+            x_ijk = {}
             for k in KB:
-                if c in Rc:
-                    depot = self.containers[c].origin
-                    model.addConstr(
-                        t_jk[depot, k] >= Rc[c] * f_ck[c, k],
-                        name=f"BargeDeparture_{c}_{k}"
-                    )
+                x_ijk[k] = {}
+                for arc in arcs_list:
+                    i, j, travel_time = arc.origin, arc.destination, arc.travel_time
+                    if i != j:
+                        x_ijk[k][(i, j)] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{j}_{k}")
+            logging.debug(f"Defined x_ijk variables for {len(x_ijk)} barges and their possible arcs")
 
-        # (9) Time calculation constraints linking arrival times at consecutive nodes
-        for k in KB:
-            for arc in arcs:
-                i, j, _ = arc
-                handling_time = L * quicksum(
-                    Zcj.get((c, i), 0) * f_ck[c, k] for c in C
-                )
-                if (i, j) in x_ijk[k]:
-                    model.addConstr(
-                        t_jk[j, k] >= t_jk[i, k] + handling_time + Tij[i, j] - (1 - x_ijk[k][(i, j)]) * M,
-                        name=f"TimeLower_{i}_{j}_{k}"
-                    )
-                    model.addConstr(
-                        t_jk[j, k] <= t_jk[i, k] + handling_time + Tij[i, j] + (1 - x_ijk[k][(i, j)]) * M,
-                        name=f"TimeUpper_{i}_{j}_{k}"
-                    )
-
-        # (10) Time windows at sea terminals for container operations
-        for c in C:
+            # p_jk: Continuous variable representing import quantities loaded by barge k at terminal j
+            # d_jk: Continuous variable representing export quantities unloaded by barge k at terminal j
+            p_jk = {}
+            d_jk = {}
             for k in KB:
                 for j in N:
-                    if self.nodes[j].type == 'terminal' and Zcj.get((c, j), 0) == 1:
-                        # Opening time constraint
+                    if self.nodes[j].type == 'terminal':
+                        p_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"p_{j}_{k}")
+                        d_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"d_{j}_{k}")
+            logging.debug(f"Defined p_jk and d_jk variables for barges at terminal nodes")
+
+            # y_ijk: Continuous variable for import containers on arc (i, j) by barge k
+            # z_ijk: Continuous variable for export containers on arc (i, j) by barge k
+            y_ijk = {}
+            z_ijk = {}
+            for k in KB:
+                y_ijk[k] = {}
+                z_ijk[k] = {}
+                for arc in arcs_list:
+                    i, j, travel_time = arc.origin, arc.destination, arc.travel_time
+                    if i != j:
+                        y_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"y_{i}_{j}_{k}")
+                        z_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"z_{i}_{j}_{k}")
+            logging.debug(f"Defined y_ijk and z_ijk variables for barges on all arcs")
+
+            # t_jk: Continuous variable representing the arrival time of barge k at node j
+            t_jk = {}
+            for k in KB:
+                for j in N:
+                    t_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"t_{j}_{k}")
+            logging.debug(f"Defined t_jk variables for barges at terminal nodes")
+
+            logging.debug(t_jk)
+
+            # =========================================================================================================================
+            #  Define Objective Function
+            # =========================================================================================================================
+
+            logging.info("Defining objective function...")
+
+            # Corrected Objective Function
+            model.setObjective(
+                quicksum(f_ck[c, k] * 2000 for c in C for k in [9, 10]) +  # Truck costs
+                quicksum(x_ijk[k][(i, j)] * HBk[k] for k in KB for (i, j) in x_ijk[k]) +  # Barge fixed costs
+                quicksum(Tij[(i, j)] * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k]) +  # Barge travel time costs
+                quicksum(
+                    gamma * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k] if self.nodes[i].type == "terminal"
+                ),  # Penalty for visiting sea terminals
+                GRB.MINIMIZE
+            )
+            logging.debug("Objective function defined")
+
+            # =========================================================================================================================
+            #  Define Constraints
+            # =========================================================================================================================
+
+            logging.info("Defining constraints...")
+
+            # (1) Each container is allocated to exactly one barge or truck
+            for c in C:
+                model.addConstr(
+                    quicksum(f_ck[c, k] for k in K) == 1,
+                    name=f"Assignment_{c}"
+                )
+            logging.debug(f"Defined assignment constraints for {len(C)} containers")
+
+            # (2) Flow conservation for x_ijk (Barge Routes)
+            for k in KB:
+                origin_node = Or[k]  # Get the origin node for barge k
+                try:
+                    destination_node = depot_to_dummy[origin_node]  # Map to the corresponding dummy depot node
+                    logging.debug(f"Barge {k} originates from Depot {origin_node} to Dummy Depot {destination_node}")
+                except KeyError:
+                    logging.error(f"No dummy depot found for depot {origin_node}. Check depot_to_dummy mapping.")
+                    messagebox.showerror("Mapping Error", f"No dummy depot found for depot {origin_node}.")
+                    return None, None
+
+                for i in N:
+                    if i == origin_node:
+                        # Flow conservation for the origin node of barge k
                         model.addConstr(
-                            t_jk[j, k] >= Oc[c] - (1 - f_ck[c, k]) * M,
-                            name=f"TimeWindowOpen_{c}_{j}_{k}"
+                            (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                             quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                            == 1,
+                            name=f"Flow_conservation_origin_{k}_{i}"
                         )
-                        # Closing time constraint
+                    elif i == destination_node:
+                        # Flow conservation for the destination node of barge k
                         model.addConstr(
-                            t_jk[j, k] <= Dc[c] + (1 - f_ck[c, k]) * M,
-                            name=f"TimeWindowClose_{c}_{j}_{k}"
+                            (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                             quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                            == -1,
+                            name=f"Flow_conservation_destination_{k}_{i}"
                         )
+                    else:
+                        # Flow conservation for all other nodes
+                        model.addConstr(
+                            (quicksum(x_ijk[k][(i, j)] for j in N if j != i and (i, j) in Tij) -
+                             quicksum(x_ijk[k][(j, i)] for j in N if j != i and (j, i) in Tij))
+                            == 0,
+                            name=f"Flow_conservation_internal_{k}_{i}"
+                        )
+            logging.debug("Flow conservation constraints defined for all barges and nodes")
 
-        # Update the model with all variables and constraints
-        model.update()
+            # (3) Each barge is used at most once
+            for k in KB:
+                model.addConstr(
+                    quicksum(x_ijk[k][(i, j)] for (i, j) in x_ijk[k] if self.nodes[i].type == "depot") <= 1,
+                    name=f"Barge_used_{k}"
+                )
+            logging.debug("Usage constraints defined for barges")
 
-        # Set Gurobi parameters
-        model.setParam('OutputFlag', False)    # Disable solver output
-        model.setParam('TimeLimit', 300)       # Set a time limit of 5 minutes (300 seconds)
+            # (31) Ensure barges only carry containers from their origin depot
+            for k in KB:
+                origin_node = Or[k]
+                for c in C:
+                    if self.containers[c].origin != origin_node and self.containers[c].type == 'E':
+                        model.addConstr(f_ck[c, k] == 0, name=f"Origin_constraint_{c}_{k}")
+            logging.debug("Origin constraints for barges defined")
 
-        # Start the optimization process
-        model.optimize()
+            # (32) Ensure barges traverse destination nodes if carrying containers
+            for c in E + I:
+                destination = self.containers[c].destination
+                for k in KB:
+                    model.addConstr(
+                        quicksum(x_ijk[k][(i, destination)] for i in N if (i, destination) in Tij) >= f_ck[c, k],
+                        name=f"Barge_{k}_traverse_destination_{c}"
+                    )
+            logging.debug("Destination traversal constraints for barges defined")
 
-        # Check the status of the model to ensure feasibility and optimality
-        if model.Status != GRB.OPTIMAL and model.Status != GRB.TIME_LIMIT:
-            if model.Status == GRB.UNBOUNDED:
-                messagebox.showerror("Optimization Error", "The model cannot be solved because it is unbounded.")
+            # (4) Import quantities loaded by barge k at sea terminal j
+            for k in KB:
+                for j in N:
+                    if self.nodes[j].type == "terminal":
+                        model.addConstr(
+                            p_jk[j, k] == quicksum(Wc[c] * Zcj[c, j] * f_ck[c, k] for c in I),
+                            name=f"import_quantities_{j}_{k}"
+                        )
+            logging.debug("Import quantity constraints defined for barges at terminals")
+
+            # (5) Export quantities loaded by barge k at sea terminal j
+            for k in KB:
+                for j in N:
+                    if self.nodes[j].type == "terminal":
+                        model.addConstr(
+                            d_jk[j, k] == quicksum(Wc[c] * Zcj[c, j] * f_ck[c, k] for c in E),
+                            name=f"Export_quantities_{j}_{k}"
+                        )
+            logging.debug("Export quantity constraints defined for barges at terminals")
+
+            # (6) Flow equations for y_ijk (import containers)
+            for k in KB:
+                for j in N:
+                    if self.nodes[j].type == 'terminal':
+                        inflow = quicksum(y_ijk[k][(i, j)] for i in N if (i, j) in Tij)
+                        outflow = quicksum(y_ijk[k][(j, i)] for i in N if (j, i) in Tij)
+                        model.addConstr(
+                            inflow - outflow == p_jk[j, k],
+                            name=f"ImportFlow_{j}_{k}"
+                        )
+            logging.debug("Import flow constraints defined for barges at terminals")
+
+            # (7) Flow equations for z_ijk (export containers)
+            for k in KB:
+                for j in N:
+                    if self.nodes[j].type == 'terminal':
+                        inflow = quicksum(z_ijk[k][(i, j)] for i in N if (i, j) in Tij)
+                        outflow = quicksum(z_ijk[k][(j, i)] for i in N if (j, i) in Tij)
+                        model.addConstr(
+                            inflow - outflow == d_jk[j, k],
+                            name=f"ExportFlow_{j}_{k}"
+                        )
+            logging.debug("Export flow constraints defined for barges at terminals")
+
+            # (8) Capacity constraints for barges and trucks
+            for k in K:
+                if k in KB:
+                    # Barge capacity on each arc
+                    for (i, j) in x_ijk[k]:
+                        model.addConstr(
+                            y_ijk[k][(i, j)] + z_ijk[k][(i, j)] <= Qk[k] * x_ijk[k][(i, j)],
+                            name=f"Capacity_{i}_{j}_{k}"
+                        )
+            logging.debug("Capacity constraints defined for barges and trucks")
+
+            # (9) Barge departure time after release of export containers
+            for c in E:
+                for k in KB:
+                    if c in Rc:
+                        depot = self.containers[c].origin
+                        model.addConstr(
+                            t_jk[depot, k] >= Rc[c] * f_ck[c, k],
+                            name=f"BargeDeparture_{c}_{k}"
+                        )
+            logging.debug("Barge departure time constraints defined for export containers")
+
+            # (10) Time consistency constraints
+            for k in KB:
+                for arc in arcs_list:
+                    i, j, travel_time = arc.origin, arc.destination, arc.travel_time
+                    if (i, j) in Tij:
+                        model.addConstr(
+                            t_jk[j, k] >= t_jk[i, k] + L * quicksum(Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] - (
+                                    1 - x_ijk[k][(i, j)]) * M,
+                            name=f"TimeLB_{i}_{j}_{k}"
+                        )
+                        model.addConstr(
+                            t_jk[j, k] <= t_jk[i, k] + L * quicksum(Zcj[c, i] * f_ck[c, k] for c in C) + Tij[(i, j)] + (
+                                    1 - x_ijk[k][(i, j)]) * M,
+                            name=f"TimeUB_{i}_{j}_{k}"
+                        )
+            logging.debug("Time consistency constraints defined for all arcs and barges")
+
+            # (12) Time window constraints for containers at terminals
+            for c in C:
+                for j in N:
+                    if self.nodes[j].type == 'terminal':
+                        for k in KB:
+                            model.addConstr(
+                                t_jk[j, k] >= Oc[c] * Zcj[c, j] - (1 - f_ck[c, k]) * M,
+                                name=f"ReleaseTime_{c}_{j}_{k}"
+                            )
+                            model.addConstr(
+                                t_jk[j, k] <= Dc[c] + (1 - f_ck[c, k]) * M,
+                                name=f"ClosingTime_{c}_{j}_{k}"
+                            )
+            logging.debug("Time window constraints defined for containers at terminals")
+
+            # (13) Time of delivery is after time of pickup
+            for c in C:
+                origin = self.containers[c].origin
+                destination = self.containers[c].destination
+                for k in KB:
+                    model.addConstr(
+                        t_jk[destination, k] >= t_jk[origin, k] - (1 - f_ck[c, k]) * M,
+                        name=f"Sequence_origin_before_destination_indirect_{k}_{c}"
+                    )
+            logging.debug("Delivery time constraints defined for containers")
+
+            # =========================================================================================================================
+            #  Optimize the Model
+            # =========================================================================================================================
+
+            logging.info("Updating and optimizing the model...")
+            # Update the model with all variables and constraints
+            model.update()
+
+            # Set Gurobi parameters
+            model.setParam('OutputFlag', True)  # Enable solver output
+            model.setParam('TimeLimit', max_time)  # Set a time limit of 5 minutes (300 seconds)
+
+            # Start the optimization process
+            model.optimize()
+            logging.info("Optimization process started")
+
+            variables = self.extract_variables(model, nodes, arcs)
+
+            if model.Status == GRB.OPTIMAL or (model.Status == GRB.TIME_LIMIT and model.SolCount > 0):
+                logging.info("Optimization completed with a feasible solution.")
+
+            elif model.Status == GRB.TIME_LIMIT:
+                logging.warning("Optimization reached the time limit without finding a feasible solution.")
+                messagebox.showwarning("Time Limit Reached",
+                                       "Optimization reached the maximum time limit without finding a feasible solution.")
             elif model.Status == GRB.INFEASIBLE:
                 messagebox.showerror("Optimization Error", "The model is infeasible; please check your constraints.")
-            else:
-                messagebox.showerror("Optimization Error", f"Optimization was stopped with status {model.Status}.")
-            return None
+                logging.error("Optimization failed: Model is infeasible.")
+                return None, None
 
-        return model
+            return model, variables
+
+        except Exception as e:
+            logging.exception("An unexpected error occurred during model building or optimization.")
+            messagebox.showerror("Unexpected Error", f"An unexpected error occurred:\n{str(e)}")
+            return None, None
+
+    def extract_variables(self, model, nodes, arcs):
+        """
+        Extracts the necessary variables from the optimized model.
+        Args:
+            model (gurobipy.Model): The optimized Gurobi model.
+            nodes (dict): Dictionary of Node objects.
+            arcs (list): List of Arc objects.
+        Returns:
+            variables (dict): Dictionary containing variable values.
+        """
+        variables = {}
+
+        # Extract f_ck variables
+        f_ck = {}
+        for v in model.getVars():
+            if v.varName.startswith("f_"):
+                parts = v.varName.split("_")
+                if len(parts) >= 3:
+                    c = int(parts[1])
+                    k = parts[2]
+                    if k.isdigit():
+                        k = int(k)
+                    f_ck[c, k] = v.X
+        variables['f_ck'] = f_ck
+
+        # Extract x_ijk variables
+        x_ijk = {}
+        for v in model.getVars():
+            if v.varName.startswith("x_"):
+                parts = v.varName.split("_")
+                if len(parts) >= 4:
+                    i = int(parts[1])
+                    j = int(parts[2])
+                    k = parts[3]
+                    if k.isdigit():
+                        k = int(k)
+                    if k not in x_ijk:
+                        x_ijk[k] = {}
+                    x_ijk[k][(i, j)] = v.X
+        variables['x_ijk'] = x_ijk
+
+        # Extract p_jk variables
+        p_jk = {}
+        for v in model.getVars():
+            if v.varName.startswith("p_"):
+                parts = v.varName.split("_")
+                if len(parts) >= 3:
+                    j = int(parts[1])
+                    k = parts[2]
+                    if k.isdigit():
+                        k = int(k)
+                    p_jk[j, k] = v.X
+        variables['p_jk'] = p_jk
+
+        # Extract d_jk variables
+        d_jk = {}
+        for v in model.getVars():
+            if v.varName.startswith("d_"):
+                parts = v.varName.split("_")
+                if len(parts) >= 3:
+                    j = int(parts[1])
+                    k = parts[2]
+                    if k.isdigit():
+                        k = int(k)
+                    d_jk[j, k] = v.X
+        variables['d_jk'] = d_jk
+
+        # Extract y_ijk variables
+        y_ijk = {}
+        for v in model.getVars():
+            if v.varName.startswith("y_"):
+                parts = v.varName.split("_")
+                if len(parts) >= 4:
+                    i = int(parts[1])
+                    j = int(parts[2])
+                    k = parts[3]
+                    if k.isdigit():
+                        k = int(k)
+                    if k not in y_ijk:
+                        y_ijk[k] = {}
+                    y_ijk[k][(i, j)] = v.X
+        variables['y_ijk'] = y_ijk
+
+        # Extract z_ijk variables
+        z_ijk = {}
+        for v in model.getVars():
+            if v.varName.startswith("z_"):
+                parts = v.varName.split("_")
+                if len(parts) >= 4:
+                    i = int(parts[1])
+                    j = int(parts[2])
+                    k = parts[3]
+                    if k.isdigit():
+                        k = int(k)
+                    if k not in z_ijk:
+                        z_ijk[k] = {}
+                    z_ijk[k][(i, j)] = v.X
+        variables['z_ijk'] = z_ijk
+
+        # Extract t_jk variables
+        t_jk = {}
+        for v in model.getVars():
+            if v.varName.startswith("t_"):
+                parts = v.varName.split("_")
+                if len(parts) >= 3:
+                    j = int(parts[1])
+                    k = parts[2]
+                    if k.isdigit():
+                        k = int(k)
+                    t_jk[j, k] = v.X
+        variables['t_jk'] = t_jk
+
+        return variables
 
     def display_results(self, model, variables):
         """
@@ -849,8 +1245,8 @@ class NetworkCreatorApp:
         allocations_text.insert(tk.END, "Container Allocations:\n")
         for (c, k), value in variables['f_ck'].items():
             if value > 0.5:
-                if k == 'T':
-                    allocations_text.insert(tk.END, f"Container {c} is allocated to Truck\n")
+                if k in [9, 10]:
+                    allocations_text.insert(tk.END, f"Container {c} is allocated to Truck {k}\n")
                 else:
                     allocations_text.insert(tk.END, f"Container {c} is allocated to Barge {k}\n")
 
@@ -884,90 +1280,145 @@ class NetworkCreatorApp:
         truck_routes_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         truck_routes_text.config(yscrollcommand=truck_routes_scroll.set)
         truck_routes_text.insert(tk.END, "Truck Routes:\n")
-        for k in self.trucks.keys():
+        # Iterate through trucks and find their assignments
+        for k in [9, 10]:
             # Find containers allocated to this truck
             allocated_containers = [c for (c, veh), val in variables['f_ck'].items() if veh == k and val > 0.5]
             if allocated_containers:
-                # Determine unique origins and destinations
-                origins = set(self.containers[c].origin for c in allocated_containers)
-                destinations = set(self.containers[c].destination for c in allocated_containers)
-                # For simplicity, assume one origin and one destination per truck
-                if len(origins) == 1 and len(destinations) == 1:
-                    origin = list(origins)[0]
-                    destination = list(destinations)[0]
-                    truck_routes_text.insert(tk.END, f"\nTruck {k} Route:\n")
-                    truck_routes_text.insert(tk.END, f"{origin} -> {destination}\n")
-                else:
-                    # Handle multiple origins/destinations or implement routing logic
-                    truck_routes_text.insert(tk.END, f"\nTruck {k} Route:\n")
-                    for c in allocated_containers:
-                        origin = self.containers[c].origin
-                        destination = self.containers[c].destination
-                        truck_routes_text.insert(tk.END, f"{origin} -> {destination}\n")
+                truck_routes_text.insert(tk.END, f"\nTruck {k} Routes:\n")
+                for c in allocated_containers:
+                    origin = self.nodes[self.containers[c].origin]
+                    destination = self.nodes[self.containers[c].destination]
+                    # Draw the route description
+                    truck_routes_text.insert(tk.END, f"Container {c}: {origin.id} -> {destination.id}\n")
             else:
-                truck_routes_text.insert(tk.END, f"\nTruck {k} Route:\nNo route assigned.\n")
+                truck_routes_text.insert(tk.END, f"\nTruck {k} Routes:\nNo containers assigned.\n")
 
-    def visualize_routes(self, save_map_path, variables):
+    def get_unique_color(self, index):
+        """
+        Generates a unique color based on the index.
+        If the index exceeds the predefined color list, generates a new color.
+        """
+        if index < len(self.color_list):
+            return self.color_list[index]
+        else:
+            # Generate a color using HSV and convert it to RGB
+            hue = (index * 0.618033988749895) % 1  # Golden ratio conjugate for even distribution
+            lightness = 0.5
+            saturation = 0.5
+            rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
+            # Convert to hexadecimal color code
+            return '#%02x%02x%02x' % (int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+
+    def visualize_routes(self, variables):
         """
         Visualizes the barge and truck routes on the canvas.
         Args:
-            save_map_path (str or None): Path to save the HTML map (if needed). Not used in this implementation.
             variables (dict): Dictionary containing variable values.
         """
         # Remove existing route lines and truck routes
         self.canvas.delete("route")
         self.canvas.delete("truck_route")
 
+        # Dictionaries to keep track of label counts per node
+        start_label_counts = defaultdict(int)
+        end_label_counts = defaultdict(int)
+
+        # Define the offset distance between labels
+        label_offset = 15  # pixels
+
+        # Assign colors to barges if not already assigned
+        for idx, k in enumerate(self.barges.keys()):
+            if k not in self.barge_colors:
+                self.barge_colors[k] = self.get_unique_color(idx)
+
         # Visualize Barge Routes
-        for k, arcs in variables['x_ijk'].items():
-            route_points = []
+        for k, arcs in variables.get('x_ijk', {}).items():
+            barge_color = self.barge_colors.get(k, 'black')  # Default to black if color not found
             for (i, j), val in arcs.items():
                 if val > 0.5:
-                    origin = self.nodes[i]
-                    destination = self.nodes[j]
-                    route_points.append((origin.x, origin.y))
-                    route_points.append((destination.x, destination.y))
-                    # Draw a line segment for this arc
-                    self.canvas.create_line(origin.x, origin.y, destination.x, destination.y, fill='red', width=2, tags="route")
-            if route_points:
-                # Mark the start and end points
-                start_node = self.nodes[route_points[0][0]]
-                end_node = self.nodes[route_points[-1][0]]
-                self.canvas.create_oval(start_node.x - 7, start_node.y - 7, start_node.x + 7, start_node.y + 7, outline='black', width=2, tags="route")
-                self.canvas.create_text(start_node.x, start_node.y - 10, text=f"Barge {k} Start", fill='black', font=('Arial', 10, 'bold'), tags="route")
-                self.canvas.create_oval(end_node.x - 7, end_node.y - 7, end_node.x + 7, end_node.y + 7, outline='black', width=2, tags="route")
-                self.canvas.create_text(end_node.x, end_node.y - 10, text=f"Barge {k} End", fill='black', font=('Arial', 10, 'bold'), tags="route")
+                    origin = self.nodes.get(i)
+                    destination = self.nodes.get(j)
+                    if origin and destination:
+                        # Draw a line for this arc with the barge's color
+                        self.canvas.create_line(
+                            origin.x, origin.y,
+                            destination.x, destination.y,
+                            fill=barge_color, width=2,
+                            tags="route"
+                        )
+                    else:
+                        logging.warning(f"Origin ({i}) or Destination ({j}) node not found for Barge {k}.")
 
-        # Visualize Truck Routes
-        # Iterate through trucks and find their assignments
-        for k in self.trucks.keys():
-            # Find containers allocated to this truck
-            allocated_containers = [c for (c, veh), val in variables['f_ck'].items() if veh == k and val > 0.5]
-            if allocated_containers:
-                # Determine unique origins and destinations
-                origins = set(self.containers[c].origin for c in allocated_containers)
-                destinations = set(self.containers[c].destination for c in allocated_containers)
-                # For simplicity, connect each origin to its destination
-                for c in allocated_containers:
-                    origin = self.nodes[self.containers[c].origin]
-                    destination = self.nodes[self.containers[c].destination]
-                    # Draw a dashed blue line for truck routes
-                    self.canvas.create_line(origin.x, origin.y, destination.x, destination.y, fill='blue', width=2, dash=(4, 2), tags="truck_route")
-                    # Mark the start and end points
-                    self.canvas.create_oval(origin.x - 7, origin.y - 7, origin.x + 7, origin.y + 7, outline='black', width=2, tags="truck_route")
-                    self.canvas.create_text(origin.x, origin.y - 10, text=f"Truck {k} Start", fill='black', font=('Arial', 10, 'bold'), tags="truck_route")
-                    self.canvas.create_oval(destination.x - 7, destination.y - 7, destination.x + 7, destination.y + 7, outline='black', width=2, tags="truck_route")
-                    self.canvas.create_text(destination.x, destination.y - 10, text=f"Truck {k} End", fill='black', font=('Arial', 10, 'bold'), tags="truck_route")
+            # Optionally, mark start and end points for each barge
+            origin_node_id = self.barges[k].origin
+            dummy_node_id = self.depot_to_dummy.get(origin_node_id)
+            if dummy_node_id and dummy_node_id in self.nodes:
+                end_node = self.nodes[dummy_node_id]
+            else:
+                # Fallback: last node in route
+                if arcs:
+                    last_route = max(arcs.items(), key=lambda item: item[1])[0]
+                    end_node = self.nodes.get(last_route[1], self.nodes.get(origin_node_id))
+                else:
+                    end_node = self.nodes.get(origin_node_id)
+            start_node = self.nodes.get(origin_node_id)
+
+            if not start_node or not end_node:
+                logging.warning(f"Start or End node not found for Barge {k}.")
+                continue
+
+            # Draw start node marker
+            self.canvas.create_oval(
+                start_node.x - 7, start_node.y - 7,
+                start_node.x + 7, start_node.y + 7,
+                outline='black', width=2, tags="route"
+            )
+
+            # Calculate offset for start label
+            start_count = start_label_counts[start_node.id]
+            start_label_y = start_node.y - 10 - (start_count * label_offset)
+            start_label_text = f"Barge {k} Start"
+            self.canvas.create_text(
+                start_node.x, start_label_y,
+                text=start_label_text,
+                fill=barge_color,  # Use barge color for text
+                font=('Arial', 10, 'bold'),
+                tags="route"
+            )
+            start_label_counts[start_node.id] += 1
+
+            # Draw end node marker
+            self.canvas.create_oval(
+                end_node.x - 7, end_node.y - 7,
+                end_node.x + 7, end_node.y + 7,
+                outline='black', width=2, tags="route"
+            )
+
+            # Calculate offset for end label
+            end_count = end_label_counts[end_node.id]
+            end_label_y = end_node.y - 10 - (end_count * label_offset)
+            end_label_text = f"Barge {k} End"
+            self.canvas.create_text(
+                end_node.x, end_label_y,
+                text=end_label_text,
+                fill=barge_color,  # Use barge color for text
+                font=('Arial', 10, 'bold'),
+                tags="route"
+            )
+            end_label_counts[end_node.id] += 1
+
+
 
         # Notify the user
-        messagebox.showinfo("Routes Visualized", "Barge and Truck routes have been visualized on the map.")
+        messagebox.showinfo("Routes Visualized", "Barge routes have been visualized on the map.")
 
     def construct_arcs(self):
         """
         Constructs the arcs based on nodes' pixel coordinates.
         Returns:
             nodes (dict): Dictionary of Node objects keyed by node ID.
-            arcs (list): List of Arc tuples representing possible routes (origin, destination, travel_time).
+            arcs (list): List of Arc objects representing possible routes.
         """
         nodes = self.nodes
         arcs = []
@@ -980,47 +1431,12 @@ class NetworkCreatorApp:
                 if i != j:
                     origin = nodes[i]
                     destination = nodes[j]
-                    distance = sqrt((origin.x - destination.x)**2 + (origin.y - destination.y)**2)  # pixels
+                    distance = sqrt((origin.x - destination.x) ** 2 + (origin.y - destination.y) ** 2)  # pixels
                     travel_time = distance / average_speed_pixels_per_min  # minutes
-                    arcs.append((i, j, travel_time))
+                    arc = Arc(origin=i, destination=j, travel_time=travel_time)
+                    arcs.append(arc)
         return nodes, arcs
 
-    def extract_variables(self, model, nodes, arcs):
-        """
-        Extracts the necessary variables from the optimized model.
-        Args:
-            model (gurobipy.Model): The optimized Gurobi model.
-            nodes (dict): Dictionary of Node objects.
-            arcs (list): List of Arc tuples.
-        Returns:
-            variables (dict): Dictionary containing variable values.
-        """
-        variables = {}
-
-        # Extract f_ck variables
-        f_ck = {}
-        for v in model.getVars():
-            if v.varName.startswith("f_"):
-                parts = v.varName.split("_")
-                c = int(parts[1])
-                k = parts[2]
-                f_ck[c, k] = v.X
-        variables['f_ck'] = f_ck
-
-        # Extract x_ijk variables
-        x_ijk = {}
-        for v in model.getVars():
-            if v.varName.startswith("x_"):
-                parts = v.varName.split("_")
-                i = int(parts[1])
-                j = int(parts[2])
-                k = parts[3]
-                if k not in x_ijk:
-                    x_ijk[k] = {}
-                x_ijk[k][(i, j)] = v.X
-        variables['x_ijk'] = x_ijk
-
-        return variables
 
     def load_network(self):
         # Prompt user to select a JSON file
@@ -1046,6 +1462,9 @@ class NetworkCreatorApp:
             self.nodes[node_id] = node
             self.draw_node(node)
 
+        # Load depot_to_dummy mapping
+        self.depot_to_dummy = {int(k): int(v) for k, v in data.get("depot_to_dummy", {}).items()}
+
         # Load containers
         for container_id, container_data in data.get("containers", {}).items():
             container_id = int(container_id)
@@ -1061,13 +1480,13 @@ class NetworkCreatorApp:
         # Load barges
         for barge_id, barge_data in data.get("barges", {}).items():
             barge_id = int(barge_id)
-            barge = Barge(barge_id, barge_data["capacity"], barge_data["fixed_cost"])
+            barge = Barge(barge_id, barge_data["capacity"], barge_data["fixed_cost"], barge_data["origin"])
             self.barges[barge_id] = barge
 
         # Load trucks
         for truck_id, truck_data in data.get("trucks", {}).items():
             truck_id = int(truck_id)
-            truck = Truck(truck_id, truck_data["cost_per_container"])
+            truck = Truck(truck_data["cost_per_container"])
             self.trucks[truck_id] = truck
 
         # Load next IDs
@@ -1078,10 +1497,94 @@ class NetworkCreatorApp:
 
         messagebox.showinfo("Loaded", f"Network data loaded from {load_path}.")
 
+    def random_generation_containers(self, container_amount=10, buffer_time=24*60):
+        """
+        Generates random containers based on current depots and terminals.
+        Args:
+            container_amount (int): Number of containers to generate.
+            buffer_time (int): Minimum buffer time in minutes between opening and closing dates.
+        """
+        if not self.nodes:
+            messagebox.showerror("No Nodes", "Please add nodes before generating containers.")
+            return
 
+        # Identify depots, dummy depots, and terminals
+        depots = [node_id for node_id, node in self.nodes.items() if node.type == 'depot']
+        dummy_depots = [node_id for node_id, node in self.nodes.items() if node.type == 'depot_arr']
+        terminals = [node_id for node_id, node in self.nodes.items() if node.type == 'terminal']
+
+        if not depots or not dummy_depots or not terminals:
+            messagebox.showerror("Insufficient Nodes", "Ensure that there are depots, dummy depots, and terminals in the network.")
+            return
+
+        # Ensure the number of dummy depots matches the number of depots
+        if len(dummies := [dummy for dummy in dummy_depots]) != len(depots):
+            messagebox.showerror("Mismatch", "Each depot must have a corresponding dummy depot.")
+            return
+
+        # Seed for reproducibility (optional)
+        random.seed(42)
+
+        for _ in range(container_amount):
+            container_id = self.next_container_id
+            self.next_container_id += 1
+
+            size = random.choice([1, 2])  # Size: 1 or 2
+            container_type = random.choice(["E", "I"])
+
+            if container_type == "E":
+                # Opening date within first 24 hours
+                opening_date = random.randint(0, 24*60)  # 0 to 1440 minutes
+                # Closing date is at least buffer_time after opening_date
+                max_closing_date = opening_date + buffer_time + 172*60  # Up to ~3 days
+                closing_date = opening_date + buffer_time + random.randint(0, max_closing_date - (opening_date + buffer_time))
+                # Release date is before or at opening_date
+                release_date = random.randint(0, opening_date)
+
+                origin = random.choice(depots)  # Random depot origin
+                destination = random.choice(terminals)  # Random terminal destination
+
+            else:  # Import containers
+                release_date = None
+                # Opening date within first 24 hours
+                opening_date = random.randint(0, 24*60)  # 0 to 1440 minutes
+                # Closing date is at least buffer_time after opening_date
+                max_closing_date = opening_date + buffer_time + 172*60  # Up to ~3 days
+                closing_date = opening_date + buffer_time + random.randint(0, max_closing_date - (opening_date + buffer_time))
+
+                origin = random.choice(terminals)  # Random terminal origin
+                destination = random.choice(dummy_depots)  # Random dummy depot destination
+
+            # Cap closing_date to maximum allowed (e.g., 196*60 minutes)
+            closing_date = min(closing_date, 196*60)
+
+            # Create and add the container
+            container = Container(container_id, size, release_date, opening_date, closing_date, origin, destination, container_type)
+            self.containers[container_id] = container
+
+        messagebox.showinfo("Random Containers Added", f"{container_amount} random containers have been generated successfully.")
+
+    def generate_random_containers(self):
+        # Prompt user for the number of containers to generate
+        container_amount = simpledialog.askinteger("Random Containers", "Enter the number of random containers to generate:", minvalue=1, maxvalue=1000)
+        if container_amount:
+            self.random_generation_containers(container_amount=container_amount)
 
 # Run the application
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s:%(message)s')
+    import tkinter as tk
+    from tkinter import simpledialog, messagebox, filedialog
+    from tkinter import ttk
+    from PIL import Image, ImageTk
+    import json
+    import os
+    from math import sqrt
+    from gurobipy import *
+    import random  # Added for random container generation
+
+
     root = tk.Tk()
     app = NetworkCreatorApp(root)
     root.mainloop()
