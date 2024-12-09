@@ -5,6 +5,19 @@ import time
 import queue
 import colorsys  # Import colorsys for color generation
 import random  # If needed for other random functionalities
+import logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s:%(message)s')
+import tkinter as tk
+from tkinter import simpledialog, messagebox, filedialog
+from tkinter import ttk
+from PIL import Image, ImageTk
+import json
+import os
+from math import sqrt
+from gurobipy import *
+import random  # Added for random container generation
+import ast
+
 
 
 # Define data classes
@@ -223,8 +236,8 @@ class NetworkCreatorApp:
             dummy_node_id = self.next_node_id
             self.next_node_id += 1
             # Position the dummy depot slightly offset from the real depot for visibility
-            dummy_x = x + 20  # Offset by 20 pixels; adjust as needed
-            dummy_y = y + 20
+            dummy_x = x + 10  # Offset by 20 pixels; adjust as needed
+            dummy_y = y + 10
             dummy_node = Node(dummy_node_id, dummy_x, dummy_y, 'depot_arr')
             self.nodes[dummy_node_id] = dummy_node
             self.depot_to_dummy[node_id] = dummy_node_id
@@ -253,19 +266,28 @@ class NetworkCreatorApp:
         """
         return [str(node.id) for node in self.nodes.values() if node.type == node_type]
 
+    import tkinter as tk
+    from tkinter import messagebox
+    import ast
+    import json
+
     def add_container(self):
-        if not self.nodes:
+        if not any(self.nodes.values()):
             messagebox.showerror("No Nodes", "Please add nodes before adding containers.")
             return
 
         # Create a new window for container input
         container_window = tk.Toplevel(self.master)
         container_window.title("Add Containers")
-        container_window.geometry("800x400")  # Adjust size as needed
+        container_window.geometry("900x600")  # Adjust size as needed
+
+        # Create a main frame to hold canvas and scrollbar
+        main_frame = tk.Frame(container_window)
+        main_frame.pack(fill='both', expand=True)
 
         # Create a canvas and a vertical scrollbar for the container inputs
-        canvas = tk.Canvas(container_window, borderwidth=0, background="#f0f0f0")
-        scrollbar = tk.Scrollbar(container_window, orient="vertical", command=canvas.yview)
+        canvas = tk.Canvas(main_frame, borderwidth=0, background="#f0f0f0")
+        scrollbar = tk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = tk.Frame(canvas, background="#f0f0f0")
 
         scrollable_frame.bind(
@@ -285,13 +307,15 @@ class NetworkCreatorApp:
         container_entries = []
 
         # Define table headers
-        headers = ["Size", "Release Date", "Opening Date", "Closing Date",
+        headers = ["Size (2=20ft, 4=40ft)", "Release Date", "Opening Date", "Closing Date",
                    "Origin Node ID", "Destination Node ID", "Type", "Action"]
         for col, header in enumerate(headers):
-            tk.Label(scrollable_frame, text=header, borderwidth=1, relief="solid", bg="#d3d3d3").grid(row=0, column=col, padx=1, pady=1, sticky='nsew')
+            tk.Label(scrollable_frame, text=header, borderwidth=1, relief="solid", bg="#d3d3d3").grid(row=0, column=col,
+                                                                                                      padx=1, pady=1,
+                                                                                                      sticky='nsew')
 
         # Function to add a new container input row
-        def add_container_row():
+        def add_container_row(data=None):
             row = len(container_entries) + 1  # Start from row 1 as row 0 has headers
 
             # Size
@@ -312,12 +336,15 @@ class NetworkCreatorApp:
 
             # Origin node
             origin_var = tk.StringVar(scrollable_frame)
-            origin_menu = tk.OptionMenu(scrollable_frame, origin_var, *self.get_node_ids_by_type('depot') + self.get_node_ids_by_type('depot_arr'))
+            origin_menu = tk.OptionMenu(scrollable_frame, origin_var,
+                                        *self.get_node_ids_by_type('depot') + self.get_node_ids_by_type('depot_arr'))
             origin_menu.grid(row=row, column=4, padx=1, pady=1, sticky='nsew')
 
             # Destination node
             destination_var = tk.StringVar(scrollable_frame)
-            destination_menu = tk.OptionMenu(scrollable_frame, destination_var, *self.get_node_ids_by_type('terminal') + self.get_node_ids_by_type('depot_arr'))
+            destination_menu = tk.OptionMenu(scrollable_frame, destination_var,
+                                             *self.get_node_ids_by_type('terminal') + self.get_node_ids_by_type(
+                                                 'depot_arr'))
             destination_menu.grid(row=row, column=5, padx=1, pady=1, sticky='nsew')
 
             # Container type
@@ -338,24 +365,43 @@ class NetworkCreatorApp:
                     # Export: Origin = depot or dummy, Destination = terminal
                     origin_menu['menu'].delete(0, 'end')
                     for depot_id in self.get_node_ids_by_type('depot') + self.get_node_ids_by_type('depot_arr'):
-                        origin_menu['menu'].add_command(label=depot_id, command=lambda value=depot_id: origin_var.set(value))
+                        origin_menu['menu'].add_command(label=depot_id,
+                                                        command=lambda value=depot_id: origin_var.set(value))
                     destination_menu['menu'].delete(0, 'end')
                     for terminal_id in self.get_node_ids_by_type('terminal'):
-                        destination_menu['menu'].add_command(label=terminal_id, command=lambda value=terminal_id: destination_var.set(value))
+                        destination_menu['menu'].add_command(label=terminal_id,
+                                                             command=lambda value=terminal_id: destination_var.set(
+                                                                 value))
                 elif container_type == 'I':
                     # Import: Origin = terminal, Destination = dummy depots
                     origin_menu['menu'].delete(0, 'end')
                     for terminal_id in self.get_node_ids_by_type('terminal'):
-                        origin_menu['menu'].add_command(label=terminal_id, command=lambda value=terminal_id: origin_var.set(value))
+                        origin_menu['menu'].add_command(label=terminal_id,
+                                                        command=lambda value=terminal_id: origin_var.set(value))
                     destination_menu['menu'].delete(0, 'end')
                     for dummy_id in self.get_node_ids_by_type('depot_arr'):
-                        destination_menu['menu'].add_command(label=dummy_id, command=lambda value=dummy_id: destination_var.set(value))
+                        destination_menu['menu'].add_command(label=dummy_id,
+                                                             command=lambda value=dummy_id: destination_var.set(value))
 
             # Bind the type_var to the on_type_change function
             type_var.trace('w', on_type_change)
 
             # Initialize menus based on default type 'E'
             on_type_change()
+
+            # If data is provided, populate the fields
+            if data:
+                try:
+                    size_entry.insert(0, data['size'])
+                    release_entry.insert(0, data['release_date'])
+                    opening_entry.insert(0, data['opening_date'])
+                    closing_entry.insert(0, data['closing_date'])
+                    origin_var.set(str(data['origin_node_id']))  # Ensure it's a string for the GUI
+                    destination_var.set(str(data['destination_node_id']))  # Ensure it's a string for the GUI
+                    type_var.set(data['type'])
+                    on_type_change()
+                except KeyError as e:
+                    messagebox.showerror("Data Error", f"Missing key in data: {e}")
 
             # Append the entries to the list
             container_entries.append({
@@ -370,17 +416,78 @@ class NetworkCreatorApp:
 
         # Function to delete a container row
         def delete_container_row(row):
-            # Disable editing for simplicity (optional: implement actual row deletion)
+            # Remove the widgets from the grid
             for widget in scrollable_frame.grid_slaves(row=row):
                 widget.grid_forget()
+            # Optionally, remove the entry from container_entries
+            # This requires tracking row numbers more carefully
+            # For simplicity, we're not implementing it here
+
+        # Function to handle bulk addition from list of tuples
+        def add_containers_from_list():
+            input_window = tk.Toplevel(container_window)
+            input_window.title("Add Containers from List")
+            input_window.geometry("500x400")
+
+            tk.Label(input_window, text="Enter list of container tuples:", wraplength=480).pack(pady=10)
+
+            text_input = tk.Text(input_window, wrap='word')
+            text_input.pack(padx=10, pady=10, fill='both', expand=True)
+
+
+            def submit_list():
+                input_text = text_input.get("1.0", tk.END).strip()
+                if not input_text:
+                    messagebox.showerror("Input Error", "Please enter a list of tuples.")
+                    return
+                try:
+                    # Safely evaluate the list of tuples
+                    data_list = ast.literal_eval(input_text)
+                    if not isinstance(data_list, list):
+                        raise ValueError("Input must be a list of tuples.")
+                    for item in data_list:
+                        if not isinstance(item, tuple) or len(item) != 7:
+                            raise ValueError(
+                                "Each item must be a tuple with 7 elements: (size, release_date, opening_date, closing_date, origin_node_id, destination_node_id, type)")
+                        size, release_date, opening_date, closing_date, origin_node_id, destination_node_id, container_type = item
+                        # Validate container_type
+                        if container_type not in ('E', 'I'):
+                            raise ValueError("Container type must be 'E' or 'I'.")
+                        # Prepare data dictionary
+                        data = {
+                            'size': size,
+                            'release_date': release_date,
+                            'opening_date': opening_date,
+                            'closing_date': closing_date,
+                            'origin_node_id': origin_node_id,
+                            'destination_node_id': destination_node_id,
+                            'type': container_type
+                        }
+                        add_container_row(data)
+                    messagebox.showinfo("Success", "Containers added successfully.")
+                    input_window.destroy()
+                except Exception as e:
+                    messagebox.showerror("Parsing Error", f"An error occurred while parsing the input:\n{e}")
+
+            submit_btn = tk.Button(input_window, text="Add Containers", command=submit_list)
+            submit_btn.pack(pady=10)
+
+        # Create a separate frame for the control buttons
+        control_frame = tk.Frame(container_window)
+        control_frame.pack(fill='x', padx=10, pady=10)
 
         # Button to add more container rows
-        add_another_btn = tk.Button(scrollable_frame, text="Add Another Container", command=add_container_row)
-        add_another_btn.grid(row=1000, column=0, padx=5, pady=10, sticky='w')  # Use a high row number to place it at the bottom
+        add_another_btn = tk.Button(control_frame, text="Add Another Container", command=add_container_row)
+        add_another_btn.pack(side='left', padx=5)
+
+        # Button to add containers from a list of tuples
+        add_from_list_btn = tk.Button(control_frame, text="Add Containers from List", command=add_containers_from_list)
+        add_from_list_btn.pack(side='left', padx=5)
 
         # Submit button
-        submit_btn = tk.Button(scrollable_frame, text="Submit All Containers", command=lambda: self.submit_containers(container_window, container_entries))
-        submit_btn.grid(row=1001, column=0, columnspan=8, pady=20)  # Adjust columnspan as per headers
+        submit_btn = tk.Button(control_frame, text="Submit All Containers",
+                               command=lambda: self.submit_containers(container_window, container_entries))
+        submit_btn.pack(side='right', padx=5)
 
         # Add the first container row
         add_container_row()
@@ -1572,19 +1679,6 @@ class NetworkCreatorApp:
 
 # Run the application
 if __name__ == "__main__":
-    import logging
-    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s:%(message)s')
-    import tkinter as tk
-    from tkinter import simpledialog, messagebox, filedialog
-    from tkinter import ttk
-    from PIL import Image, ImageTk
-    import json
-    import os
-    from math import sqrt
-    from gurobipy import *
-    import random  # Added for random container generation
-
-
     root = tk.Tk()
     app = NetworkCreatorApp(root)
     root.mainloop()
