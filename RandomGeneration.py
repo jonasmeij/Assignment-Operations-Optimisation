@@ -4,6 +4,13 @@ from geopy.distance import geodesic
 from shapely.geometry import Point, LineString
 from Visualization import visualize_routes, visualize_schedule_random, visualize_routes_static, visualize_routes_terminals
 import random
+import logging
+from typing import Dict, List, Tuple, Set
+import random
+from dataclasses import dataclass, field
+from typing import List, Dict, Tuple, Optional
+from geopy.distance import geodesic
+import folium
 
 class Node:
     def __init__(self, node_id, node_type='terminal'):
@@ -45,6 +52,358 @@ class Barge:
 class Truck:
     def __init__(self, cost_per_container):
         self.cost_per_container = cost_per_container  # HT: Cost per container transported by truck
+
+@dataclass
+class AllocationResult:
+    barge_id: int
+    containers: List[int] = field(default_factory=list)
+    route: List[int] = field(default_factory=list)
+    departure_time: float = 0.0  # in minutes
+
+
+def construct_master_routes(
+        barges: Dict[int, 'Barge'],
+        master_route_sequence: List[int],
+        depot_to_dummy: Dict[int, int],
+        node_coords: Dict[int, Tuple[float, float]]
+) -> Dict[int, List[int]]:
+    """
+    Constructs the master route for each barge, starting from its origin depot,
+    visiting all sea terminals sorted from closest to furthest, and returning to depot_arr.
+
+    Args:
+        barges (dict): Dictionary of Barge objects keyed by barge ID.
+        master_route_sequence (list): List of sea terminal node IDs.
+        depot_to_dummy (dict): Mapping from depot IDs to dummy arrival node IDs.
+        node_coords (dict): Coordinates of nodes keyed by node ID, as (latitude, longitude).
+
+    Returns:
+        master_routes (dict): Mapping of barge IDs to their sorted master route sequences.
+    """
+    master_routes = {}
+    for barge_id, barge in barges.items():
+        origin_depot = barge.origin
+        depot_arr = depot_to_dummy[origin_depot]
+
+        # Retrieve coordinates of the origin depot
+        origin_coords = node_coords.get(origin_depot)
+        if origin_coords is None:
+            raise ValueError(f"Coordinates for origin depot {origin_depot} not found in node_coords.")
+
+        # List to store tuples of (terminal_id, distance_from_origin)
+        terminals_with_distance = []
+
+        for terminal_id in master_route_sequence:
+            terminal_coords = node_coords.get(terminal_id)
+            if terminal_coords is None:
+                raise ValueError(f"Coordinates for terminal {terminal_id} not found in node_coords.")
+
+            # Calculate the geodesic distance in kilometers
+            distance_km = geodesic(origin_coords, terminal_coords).kilometers
+            terminals_with_distance.append((terminal_id, distance_km))
+
+        # Sort the terminals based on distance from the origin depot (ascending order)
+        sorted_terminals = sorted(terminals_with_distance, key=lambda x: x[1])
+
+        # Extract the sorted terminal IDs
+        sorted_terminal_ids = [terminal_id for terminal_id, _ in sorted_terminals]
+
+        # Construct the master route: origin_depot -> sorted_terminals -> depot_arr
+        master_route = [origin_depot] + sorted_terminal_ids + [depot_arr]
+        master_routes[barge_id] = master_route
+
+    return master_routes
+
+def master_route_index(
+    destination: int,
+    master_routes: Dict[int, List[int]],
+    barges: Dict[int, 'Barge']
+) -> int:
+    """
+    Retrieves the index of the destination in the master route of the first barge.
+    Assumes all master routes have the same terminal sequence.
+
+    Args:
+        destination (int): Destination node ID.
+        master_routes (dict): Mapping of barge IDs to their master route sequences.
+        barges (dict): Dictionary of Barge objects.
+
+    Returns:
+        index (int): Index of the destination in the master route.
+    """
+    if not master_routes:
+        return 0
+    first_barge_id = next(iter(master_routes))
+    try:
+        return master_routes[first_barge_id].index(destination)
+    except ValueError:
+        return len(master_routes[first_barge_id])  # If destination not found, place at end
+
+def check_feasibility(
+    allocation: 'AllocationResult',
+    container: 'Container',
+    tentative_route: List[int],
+    containers: Dict[int, 'Container'],
+    master_routes: Dict[int, List[int]],
+    compute_travel_time
+) -> Tuple[bool, float]:
+    """
+    Checks if inserting a container into a barge's route is feasible.
+
+    Args:
+        allocation (AllocationResult): Current allocation of the barge.
+        container (Container): Container to be inserted.
+        tentative_route (list): Tentative route after insertion.
+        containers (dict): Dictionary of all containers.
+        master_routes (dict): Mapping of barge IDs to their master route sequences.
+        compute_travel_time (function): Function to compute travel time between two nodes.
+
+    Returns:
+        feasible (bool): True if feasible, False otherwise.
+        updated_departure_time (float): Updated departure time if feasible.
+    """
+    # Initialize departure time
+    allocated_containers = allocation.containers + [container.id]
+    if any(containers[c].type == 'E' for c in allocated_containers):
+        latest_export_release = max(
+            containers[c].release_date for c in allocated_containers if containers[c].type == 'E'
+        )
+        departure_time = latest_export_release
+    else:
+        departure_time = 0.0
+
+    # Compute arrival times at each node
+    arrival_time = departure_time
+    current_node = tentative_route[0]
+
+    for next_node in tentative_route[1:]:
+        travel_time = compute_travel_time(current_node, next_node)
+        arrival_time += travel_time
+
+        # Check time windows for containers destined to next_node
+        relevant_containers = [
+            c for c in allocated_containers if containers[c].destination == next_node
+        ]
+        for c_id in relevant_containers:
+            container_obj = containers[c_id]
+            # If arrival is before opening_date, wait until opening
+            if arrival_time < container_obj.opening_date:
+                arrival_time = container_obj.opening_date
+            # If arrival is after closing_date, infeasible
+            if arrival_time > container_obj.closing_date:
+                return False, departure_time
+
+        current_node = next_node
+
+    # Update departure time if necessary
+    return True, departure_time
+
+def greedy_assign_containers_to_barges(
+    containers: Dict[int, Container],
+    barges: Dict[int, Barge],
+    nodes: Dict[int, Node],
+    depot_to_dummy: Dict[int, int],
+    master_routes: Dict[int, List[int]],
+    node_coords: Dict[int, Tuple[float, float]],
+    max_departure_time: float = 196 * 60  # 196 hours in minutes
+) -> Tuple[Dict[int, AllocationResult], List[int]]:
+    """
+    Greedy algorithm to assign containers to barges based on master routes and barge capacities.
+
+    The algorithm ensures that:
+    1. All containers picked up from their origin depots are dropped off at their respective destination terminals.
+    2. Containers destined for depot_arr are picked up from terminals.
+    3. Capacity constraints are respected, considering current load changes due to pickups and drop-offs.
+
+    Args:
+        containers (dict): Dictionary of Container objects keyed by container ID.
+        barges (dict): Dictionary of Barge objects keyed by barge ID.
+        nodes (dict): Dictionary of Node objects keyed by node ID.
+        depot_to_dummy (dict): Mapping from depot IDs to dummy arrival node IDs.
+        master_routes (dict): Mapping of barge IDs to their master route sequences.
+        node_coords (dict): Dictionary mapping node IDs to their (latitude, longitude) coordinates.
+        max_departure_time (float): Maximum allowed departure time in minutes.
+
+    Returns:
+        allocation (dict): Mapping of barge IDs to AllocationResult objects.
+        unassigned_containers (list): List of container IDs not assigned to any barge.
+    """
+    # Initialize allocation list
+    allocation: Dict[int, AllocationResult] = {
+        barge.id: AllocationResult(barge.id, containers=[], route=master_routes[barge.id], departure_time=0)
+        for barge in barges.values()
+    }
+
+    # Initialize onboard containers per barge
+    barge_onboard: Dict[int, Set[int]] = {barge.id: set() for barge in barges.values()}
+
+    # Separate containers into origin depot containers and terminal containers
+    origin_depot_containers = [c for c in containers.values() if c.origin in depot_to_dummy]
+    terminal_containers = [c for c in containers.values() if c.origin not in depot_to_dummy]
+
+    # Sort barges by capacity in descending order
+    sorted_barges = sorted(barges.values(), key=lambda x: x.capacity, reverse=True)
+
+    # Helper function to compute travel time
+    def compute_travel_time(i: int, j: int) -> float:
+        distance = geodesic(node_coords[i], node_coords[j]).kilometers
+        speed = 20  # km/h
+        return (distance / speed) * 60  # Convert hours to minutes
+
+    # Step 1: Sort origin depot containers by release_date (handling None)
+    sorted_origin_depot_containers = sorted(
+        origin_depot_containers,
+        key=lambda x: (master_route_index(x.destination, master_routes, barges),
+                       x.release_date if x.release_date is not None else -float('inf'))
+    )
+
+    # Step 2: Sort terminal containers by release_date (handling None)
+    sorted_terminal_containers = sorted(
+        terminal_containers,
+        key=lambda x: (master_route_index(x.destination, master_routes, barges),
+                       x.release_date if x.release_date is not None else -float('inf'))
+    )
+
+    # Step 3: Assign origin depot containers to barges
+    for container in sorted_origin_depot_containers:
+        assigned = False
+        for barge in sorted_barges:
+            master_route = allocation[barge.id].route
+            origin = container.origin
+            destination = container.destination
+            if origin not in master_route or destination not in master_route:
+                logging.debug(f"Container {container.id}: Origin or destination not in Barge {barge.id}'s route.")
+                continue  # Cannot assign if origin or destination not in route
+
+            origin_idx = master_route.index(origin)
+            destination_idx = master_route.index(destination)
+            if origin_idx >= destination_idx:
+                logging.debug(f"Container {container.id}: Origin occurs after destination in Barge {barge.id}'s route.")
+                continue  # Destination should be after origin
+
+            # Check capacity from origin to destination using a temporary simulation
+            feasible = True
+            temp_load = sum(containers[c_id].size for c_id in barge_onboard[barge.id])
+            temp_onboard = set(barge_onboard[barge.id])  # Create a temporary copy
+
+            # Simulate load from origin to destination
+            for idx in range(origin_idx, destination_idx + 1):
+                node = master_route[idx]
+
+                # Drop off containers at current node
+                drop_offs = [c_id for c_id in temp_onboard if containers[c_id].destination == node]
+                for c_id in drop_offs:
+                    temp_load -= containers[c_id].size
+                    temp_onboard.remove(c_id)
+
+                # Pick up containers at current node
+                if node == origin:
+                    if temp_load + container.size > barge.capacity:
+                        feasible = False
+                        logging.debug(f"Container {container.id}: Assigning to Barge {barge.id} would exceed capacity at node {node}.")
+                        break
+                    temp_load += container.size
+                    temp_onboard.add(container.id)
+
+                # Check capacity
+                if temp_load > barge.capacity:
+                    feasible = False
+                    logging.debug(f"Barge {barge.id}: Capacity exceeded at node {node} during assignment of Container {container.id}.")
+                    break
+
+            if feasible:
+                # Assign container to barge
+                allocation[barge.id].containers.append(container.id)
+                barge_onboard[barge.id].add(container.id)
+                assigned = True
+                logging.info(f"Assigned Container {container.id} to Barge {barge.id}.")
+                break  # Move to next container after successful assignment
+
+        if not assigned:
+            logging.warning(f"Could not assign Container {container.id} to any barge from origin depot.")
+            logging.warning(f"{container.id} with route Destination: {container.destination}, Origin: {container.origin} is not assigned to any barge.")
+
+    # Step 4: Assign terminal containers to barges
+    for container in sorted_terminal_containers:
+        assigned = False
+        for barge in sorted_barges:
+            master_route = allocation[barge.id].route
+            origin = container.origin
+            destination = container.destination  # Should be depot_arr
+            if origin not in master_route or destination not in master_route:
+                logging.debug(f"Container {container.id}: Origin or destination not in Barge {barge.id}'s route.")
+                continue  # Cannot assign if origin or destination not in route
+
+            origin_idx = master_route.index(origin)
+            destination_idx = master_route.index(destination)
+            if origin_idx >= destination_idx:
+                logging.debug(f"Container {container.id}: Origin occurs after destination in Barge {barge.id}'s route.")
+                continue  # Destination should be after origin
+
+            # Check capacity from origin to destination using a temporary simulation
+            feasible = True
+            temp_load = sum(containers[c_id].size for c_id in barge_onboard[barge.id])
+            temp_onboard = set(barge_onboard[barge.id])  # Create a temporary copy
+
+            # Simulate load from origin to destination
+            for idx in range(origin_idx, destination_idx + 1):
+                node = master_route[idx]
+
+                # Drop off containers at current node
+                drop_offs = [c_id for c_id in temp_onboard if containers[c_id].destination == node]
+                for c_id in drop_offs:
+                    temp_load -= containers[c_id].size
+                    temp_onboard.remove(c_id)
+
+                # Pick up containers at current node
+                if node == origin:
+                    if temp_load + container.size > barge.capacity:
+                        feasible = False
+                        logging.debug(f"Container {container.id}: Assigning to Barge {barge.id} would exceed capacity at node {node}.")
+                        break
+                    temp_load += container.size
+                    temp_onboard.add(container.id)
+
+                # Check capacity
+                if temp_load > barge.capacity:
+                    feasible = False
+                    logging.debug(f"Barge {barge.id}: Capacity exceeded at node {node} during assignment of Container {container.id}.")
+                    break
+
+            if feasible:
+                # Assign container to barge
+                allocation[barge.id].containers.append(container.id)
+                barge_onboard[barge.id].add(container.id)
+                assigned = True
+                logging.info(f"Assigned Container {container.id} to Barge {barge.id}.")
+                break  # Move to next container after successful assignment
+
+        if not assigned:
+            logging.warning(f"Could not assign Container {container.id} to any barge from terminal.")
+            logging.warning(f"{container.id} with route Destination: {container.destination}, Origin: {container.origin} is not assigned to any barge.")
+
+    # Step 5: Identify unassigned containers
+    assigned_containers = set()
+    for alloc in allocation.values():
+        assigned_containers.update(alloc.containers)
+    final_unassigned_containers = [c.id for c in containers.values() if c.id not in assigned_containers]
+
+    if final_unassigned_containers:
+        logging.info(f"{len(final_unassigned_containers)} containers unassigned to barges and will be assigned to trucks.")
+
+    return allocation, final_unassigned_containers
+
+
+def random_color() -> str:
+    """
+    Generates a random color in HEX format.
+
+    Returns:
+        str: HEX color string.
+    """
+    return "#{:06x}".format(random.randint(0, 0xFFFFFF))
+
+
 
 def check_model_status(model):
     """
@@ -319,7 +678,10 @@ def print_model_result(model, variables, barges, containers):
 #  Optimization of the Model using Gurobi
 #=============================================================================================================================
 
-def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy):
+def barge_scheduling_problem(
+        nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy,
+        master_routes, greedy_allocation, unassigned_containers,IS
+    ):
     """
     Optimizes barge and truck scheduling for transporting containers between depots and terminals.
     Args:
@@ -336,6 +698,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     # Big M
     M = 3000 # A large constant used in Big M method for conditional constraints
+    M2 = 100
 
     # Define sets
     N = list(nodes.keys())                         # Set of all node IDs
@@ -368,7 +731,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
     L = 15     # Handling time per container in minutes (e.g., loading/unloading time)
-    gamma = 50 # Penalty cost for visiting sea terminals
+    gamma = 100 # Penalty cost for visiting sea terminals
 
     #=========================================================================================================================
     #  Define Decision Variables
@@ -396,8 +759,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     d_jk = {}
     for k in KB:
         for j in N:
-            p_jk[j, k] = model.addVar(vtype=GRB.INTEGER, lb=0, name=f"p_{j}_{k}")
-            d_jk[j, k] = model.addVar(vtype=GRB.INTEGER, lb=0, name=f"d_{j}_{k}")
+            p_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"p_{j}_{k}")
+            d_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"d_{j}_{k}")
 
     # y_ijk: Continuous variable for import containers on arc (i, j) by barge k
     # z_ijk: Continuous variable for export containers on arc (i, j) by barge k
@@ -439,52 +802,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         quicksum(gamma * x_ijk[k][(i, j)] for k in KB for i in N for j in N if i!=j and nodes[i].type == "terminal"),  # Penalty for visiting sea terminals
         GRB.MINIMIZE)
 
-    #=========================================================================================================================
-    #  Define Constraints
-    #=========================================================================================================================
-
-    # f_ck: Binary variable indicating if container c is assigned to vehicle k
-    f_ck = {}
-    for c in C:
-        for k in K:
-            f_ck[c, k] = model.addVar(vtype=GRB.BINARY, name=f"f_{c}_{k}")
-
-    # x_ijk: Binary variable indicating if barge k traverses arc (i, j)
-    x_ijk = {}
-    for k in KB:
-        x_ijk[k] = {}
-        for i in N:
-            for j in N:
-                if i != j and (i, j) in Tij:
-                    x_ijk[k][(i, j)] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{j}_{k}")
-
-    # p_jk: Continuous variable representing import quantities loaded by barge k at terminal j
-    # d_jk: Continuous variable representing export quantities unloaded by barge k at terminal j
-    p_jk = {}
-    d_jk = {}
-    for k in KB:
-        for j in N:
-            p_jk[j, k] = model.addVar(vtype=GRB.INTEGER, lb=0, name=f"p_{j}_{k}")
-            d_jk[j, k] = model.addVar(vtype=GRB.INTEGER, lb=0, name=f"d_{j}_{k}")
-
-    # y_ijk: Continuous variable for import containers on arc (i, j) by barge k
-    # z_ijk: Continuous variable for export containers on arc (i, j) by barge k
-    y_ijk = {}
-    z_ijk = {}
-    for k in KB:
-        y_ijk[k] = {}
-        z_ijk[k] = {}
-        for i in N:
-            for j in N:
-                if i != j and (i, j) in Tij:
-                    y_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"y_{i}_{j}_{k}")
-                    z_ijk[k][(i, j)] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"z_{i}_{j}_{k}")
-
-    # t_jk: Continuous variable representing the arrival time of barge k at node j
-    t_jk = {}
-    for k in KB:
-        for j in N:
-            t_jk[j, k] = model.addVar(vtype=GRB.CONTINUOUS, lb=0, name=f"t_{j}_{k}")
 
     # =========================================================================================================================
     #  Define Objective Function
@@ -499,15 +816,12 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     """
     model.setObjective(
         quicksum(f_ck[c, 'T'] * HT[Wc[c]] for c in C) +  # Truck costs: Sum over all containers assigned to trucks
-
-        quicksum(x_ijk[k][i, j] * HBk[k] for k in KB for j in N for i in N if
-                 nodes[j].type == 'terminal' and nodes[i].type == "depot")
-        +  # Barge fixed costs: Applied only when departing from depots
-        quicksum(Tij[(i, j)] * x_ijk[k][(i, j)] for k in KB for j in N for i in N if i != j)
-        +  # Barge travel time costs: Sum of travel times for all traversed arcs by barges
-        quicksum(gamma * x_ijk[k][(i, j)] for k in KB for i in N for j in N if i != j and nodes[i].type == "terminal"),
-        # Penalty for visiting sea terminals
-        GRB.MINIMIZE)
+        quicksum(x_ijk[k][(i, j)] * HBk[k] for k in KB for (i, j) in x_ijk[k] if
+                 nodes[i].type == "depot" and nodes[j].type == "terminal") +
+        quicksum(Tij[(i, j)] * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k]) +
+        quicksum(gamma * x_ijk[k][(i, j)] for k in KB for (i, j) in x_ijk[k] if nodes[i].type == "terminal"),
+        GRB.MINIMIZE
+    )
 
     # =========================================================================================================================
     #  Define Constraints
@@ -682,9 +996,38 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
         for k in KB:
             # Only apply if container c is assigned to barge k
             model.addConstr(
-                t_jk[destination, k] >= t_jk[origin, k] - (1 - f_ck[c, k]) * M,
+                t_jk[destination, k] >= t_jk[origin, k] - (1 - f_ck[c, k]) * M2,
                 name=f"Sequence_origin_before_destination_indirect_{k}_{c}"
             )
+
+    if IS == True:
+        # Iterate through the greedy allocation and set variable starts
+        for k, allocation_result in greedy_allocation.items():
+            # Set x_ijk variables based on the route
+            route = allocation_result.route
+            for i in range(len(route) - 1):
+                from_node = route[i]
+                to_node = route[i + 1]
+                if (from_node, to_node) in x_ijk[k]:
+                    x_ijk[k][(from_node, to_node)].Start = 1
+                else:
+                    # If the arc is not part of the route, set to 0
+                    x_ijk[k][(from_node, to_node)].Start = 0
+                    pass  # Gurobi initializes binary variables to 0 by default
+
+            # Assign containers to barges
+            for c in allocation_result.containers:
+                f_ck[c, k].Start = 1
+                # Ensure container is not assigned to truck
+                f_ck[c, 'T'].Start = 0
+
+        # Assign unassigned containers to trucks
+        for c in unassigned_containers:
+            f_ck[c, 'T'].Start= 1
+            # Ensure container is not assigned to any barge
+            for k in KB:
+                f_ck[c, k].Start = 0
+
 
     #=========================================================================================================================
     #  Optimize the Model
@@ -692,9 +1035,13 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 
     # Update the model with all variables and constraints
     model.update()
+    #print models status
+    print(model.Status)
 
     # Set Gurobi parameters
-    model.setParam('OutputFlag', True)    # Enable solver output
+    model.setParam('OutputFlag', True)
+    model.setParam('StartNodeLimit',2000)
+    # Enable solver output
     model.setParam('TimeLimit', 1800)      # Set a time limit of 5 minutes (300 seconds)
 
     # Start the optimization process
@@ -735,24 +1082,63 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     #  Output Results and Visualization
     #=========================================================================================================================
 
-    output_base = f"random_generation_C_{container_amount}_"
+    output_base = f"random_generation_C_{number_containers}_"
     # Print the optimization results: objective value, container allocations, and barge routes
     print_model_result(model, variables, barges, containers)
 
     # Visualize the barge and truck routes on a map
-    visualize_routes_static(nodes, barges, variables, containers, node_coords,output_filename_full=output_base+"route_including_depot.png")
-    visualize_routes(nodes, barges, variables, containers, node_coords,file_name=output_base+"interactive_route.html")
+    # visualize_routes_static(nodes, barges, variables, containers, node_coords,output_filename_full=output_base+"route_including_depot.png")
+    # visualize_routes(nodes, barges, variables, containers, node_coords,file_name=output_base+"interactive_route.html")
     #
     # # Visualize the schedule in gantt chart format of container movements
     visualize_schedule_random(nodes, barges, variables, containers,output_file=output_base+"gantt_schedule.png")
-    visualize_routes_terminals(nodes, barges, variables, containers, node_coords, output_file=output_base+"route_terminals.png")
+    # visualize_routes_terminals(nodes, barges, variables, containers, node_coords, output_file=output_base+"route_terminals.png")
 
 
 
+def execute_gurobi_optimization(nr_c,IS):
+    """
+    Executes the greedy algorithm, optimizes with Gurobi, and maintains consistent output and visualization.
+    """
+    # Step 1: Execute Greedy Assignment
+    container_amount = nr_c
+    nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy = construct_network(container_amount=container_amount)
 
+    master_route_sequence = [
+        5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        21, 22, 23, 24  # Sea terminals
+    ]
+
+    master_routes = construct_master_routes(barges, master_route_sequence, depot_to_dummy,node_coords)
+
+    greedy_allocation, unassigned_containers = greedy_assign_containers_to_barges(
+        containers, barges, nodes, depot_to_dummy, master_routes, node_coords
+    )
+
+    if IS == True:
+        print("\nGreedy Allocation Results:")
+        for barge_id, result in greedy_allocation.items():
+            print(f"Barge {barge_id} has {len(result.containers)} containers:")
+            print(f"Containers: {result.containers}")
+            print(f"Route: {result.route}")
+            print(f"Departure Time: {result.departure_time} minutes\n")
+
+        if unassigned_containers:
+            print(f"Containers assigned to trucks: {len(unassigned_containers)}")
+            print(f"Container IDs: {unassigned_containers}")
+
+    # Step 2: Optimize with Gurobi using Greedy Assignment as MIP Start
+    barge_scheduling_problem(
+        nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy,
+        master_routes, greedy_allocation, unassigned_containers,IS
+    )
 
 
 if __name__ == "__main__":
-    container_amount = 100
-    nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy = construct_network(container_amount=container_amount)
-    barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy)
+    number_containers = 100
+    IS = True
+    execute_gurobi_optimization(number_containers,IS)
+
+
+
+

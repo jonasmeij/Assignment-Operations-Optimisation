@@ -95,6 +95,7 @@ def construct_network():
     depot_to_dummy = {
         0: 7,  # depot 0 should match with dummy node 7
         1: 8  # depot 1 should match with dummy node 8
+
     }
 
     # Define containers with their attributes
@@ -142,8 +143,10 @@ def construct_network():
 
     # Define barges with their capacities and fixed costs
     barges_data = [
-        (1, 10, 1000,0),  # Barge 1: Capacity=10, Fixed Cost=1000, origin
-        (2, 10, 1000,1),  # Barge 2: Capacity=10, Fixed Cost=1000, origin
+        (1, 8, 1000,0),  # Barge 1: Capacity=10, Fixed Cost=1000, origin
+
+        (2, 8, 1000,1),  # Barge 2: Capacity=10, Fixed Cost=1000, origin
+        (3,5,1000,0)
     ]
     barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
               for barge_id, capacity, fixed_cost,origin in barges_data}
@@ -572,7 +575,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     print_model_result(model, variables, barges, containers)
 
     # Visualize the barge and truck routes on a map
-    visualize_routes(nodes, barges, variables, containers, node_coords)
+    visualize_routes(nodes, barges, variables, containers, node_coords,"small.png")
 
     # Visualize the schedule in gantt chart format of container movements
     visualize_schedule(nodes, barges, variables, containers)

@@ -367,7 +367,7 @@ def visualize_schedule_random(nodes, barges, variables, containers,output_file):
     )
 
     # Create the plot
-    fig, ax = plt.subplots(figsize=(8.27, 5.83))  # A5 landscape size in inches
+    fig, ax = plt.subplots(figsize=(10, 5.83))  # Increased width for better text-to-plot ratio
 
     # Assign colors to resources
     resources = df['Resource'].unique()
@@ -384,7 +384,7 @@ def visualize_schedule_random(nodes, barges, variables, containers,output_file):
             color=color_map[row['Resource']],
             edgecolor='black'
         )
-        # Add a simple task label in the center of each bar
+        # Add task labels at the center of each bar
         ax.text(
             x=row['Start'] + (row['End'] - row['Start']) / 2,
             y=row['Row'],
@@ -395,10 +395,10 @@ def visualize_schedule_random(nodes, barges, variables, containers,output_file):
             fontsize=8
         )
 
-    # Add text for each barge in the middle of its schedule
+    # Add barge labels outside the plot on the left
     for _, midpoint in barge_midpoints.iterrows():
         ax.text(
-            x=-50,  # Place the text outside the left side of the plot
+            x=df['Start'].min() - 300,  # Increased offset for better alignment
             y=midpoint['Midpoint'],
             s=midpoint['Resource'],
             va='center',
@@ -411,19 +411,12 @@ def visualize_schedule_random(nodes, barges, variables, containers,output_file):
     ax.set_xlabel('Time', fontsize=10)
     ax.set_yticks(df['Row'])
     ax.set_yticklabels([])  # Remove repeated barge labels from individual rows
-    ax.set_title('Schedule of Barges (A5 Size)', fontsize=12)
+    ax.set_title('Schedule of Barges', fontsize=12)
     ax.grid(True, axis='x', linestyle='--', alpha=0.5)
 
-    # Add legend for the number of containers assigned to trucks
-    legend_text = f'Total Containers Assigned to Trucks: {truck_containers_count}'
-    ax.text(
-        1.05, 0.5, legend_text, transform=ax.transAxes, fontsize=10,
-        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'),
-        verticalalignment='center'
-    )
-
-    # Final layout adjustments
-    plt.tight_layout()
+    # Adjust x-axis limits and figure layout
+    ax.set_xlim(left=df['Start'].min() - 200, right=df['End'].max() + 50)  # Extended for spacing
+    plt.tight_layout(rect=(0.15, 0, 1, 1))  # Allocate space for barge labels on the left
     plt.show()
     plt.savefig(output_file)
 
