@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
 from geopy.distance import geodesic
 import folium
+import pandas as pd
+import os
 
 class Node:
     def __init__(self, node_id, node_type='terminal'):
@@ -632,6 +634,7 @@ def construct_network(container_amount):
 
     truck = Truck(cost_per_container=HT)
 
+
     return nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy
 
 
@@ -1047,6 +1050,12 @@ def barge_scheduling_problem(
     # Start the optimization process
     model.optimize()
 
+    #solution = {}
+    #for var in model.getVars():
+        #solution[var.VarName] = var.X
+        # Convert solution to DataFrame
+
+
     # Check the status of the model to ensure feasibility and optimality
     # check_model_status(model)
 
@@ -1078,6 +1087,8 @@ def barge_scheduling_problem(
         't_jk': t_jk_values
     }
 
+
+
     #=========================================================================================================================
     #  Output Results and Visualization
     #=========================================================================================================================
@@ -1094,9 +1105,52 @@ def barge_scheduling_problem(
     visualize_schedule_random(nodes, barges, variables, containers,output_file=output_base+"gantt_schedule.png")
     # visualize_routes_terminals(nodes, barges, variables, containers, node_coords, output_file=output_base+"route_terminals.png")
 
+    if model.status == GRB.OPTIMAL:
+        objective_value = model.objVal
+    else:
+        objective_value = "No optimal solution found."
+
+    return objective_value
 
 
-def execute_gurobi_optimization(nr_c,IS):
+
+import os
+import pandas as pd
+
+def write_results_to_csv(file_name, count, objective_value, allocation):
+    """
+    Writes results to a CSV file, appending new results if the file exists.
+    Ensures the count is incrementally tracked unless it is the base iteration (count == 0).
+
+    Args:
+        file_name (str): The name of the results CSV file.
+        count (int): The current iteration count.
+        objective_value (float): The objective value from the optimization.
+        allocation (str): Formatted string containing allocation results.
+    """
+    # Prepare results as a dictionary
+    results = {
+        "Count": [count],
+        "Objective Value": [objective_value],
+        "Allocation": [allocation]
+    }
+
+    # Convert to DataFrame
+    results_df = pd.DataFrame(results)
+
+    # Append to the file or create it if it doesn't exist
+    if not os.path.isfile(file_name):
+        # If file doesn't exist, write with header
+        results_df.to_csv(file_name, mode="w", index=False)
+    else:
+        # If file exists, append without header
+        results_df.to_csv(file_name, mode="a", header=False, index=False)
+
+    print(f"Results written to {file_name} (Iteration {count}).")
+
+
+
+def execute_gurobi_optimization(nr_c, IS, i, file_name="results.csv"):
     """
     Executes the greedy algorithm, optimizes with Gurobi, and maintains consistent output and visualization.
     """
@@ -1104,17 +1158,28 @@ def execute_gurobi_optimization(nr_c,IS):
     container_amount = nr_c
     nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy = construct_network(container_amount=container_amount)
 
+    #CHANGE PARAMETERS
+    Count = i
+
+
     master_route_sequence = [
         5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         21, 22, 23, 24  # Sea terminals
     ]
 
-    master_routes = construct_master_routes(barges, master_route_sequence, depot_to_dummy,node_coords)
+    master_routes = construct_master_routes(barges, master_route_sequence, depot_to_dummy, node_coords)
 
     greedy_allocation, unassigned_containers = greedy_assign_containers_to_barges(
         containers, barges, nodes, depot_to_dummy, master_routes, node_coords
     )
 
+    # Step 2: Optimize with Gurobi using Greedy Assignment as MIP Start
+    objective_value = barge_scheduling_problem(
+        nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy,
+        master_routes, greedy_allocation, unassigned_containers, IS
+    )
+
+    #Step 3: Output Results
     if IS == True:
         print("\nGreedy Allocation Results:")
         for barge_id, result in greedy_allocation.items():
@@ -1127,17 +1192,59 @@ def execute_gurobi_optimization(nr_c,IS):
             print(f"Containers assigned to trucks: {len(unassigned_containers)}")
             print(f"Container IDs: {unassigned_containers}")
 
-    # Step 2: Optimize with Gurobi using Greedy Assignment as MIP Start
-    barge_scheduling_problem(
-        nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy,
-        master_routes, greedy_allocation, unassigned_containers,IS
-    )
+
+
+    else:
+        # Build the string for `allocation`
+        allocation_str = "\nGreedy Allocation Results:\n"
+        for barge_id, result in greedy_allocation.items():
+            allocation_str += (
+                f"Barge {barge_id} has {len(result.containers)} containers:\n"
+                f"Containers: {result.containers}\n"
+                f"Route: {result.route}\n"
+                f"Departure Time: {result.departure_time} minutes\n\n"
+            )
+
+        if unassigned_containers:
+            allocation_str += (
+                f"Containers assigned to trucks: {len(unassigned_containers)}\n"
+                f"Container IDs: {unassigned_containers}\n"
+            )
+
+        # Store the result in `allocation`
+        allocation = allocation_str
+
+        # Use `write_results_to_csv`
+        write_results_to_csv(file_name, Count, objective_value, allocation)
+
 
 
 if __name__ == "__main__":
-    number_containers = 100
+    number_containers = 15
     IS = True
-    execute_gurobi_optimization(number_containers,IS)
+    file_name = "results.csv"
+    execute_gurobi_optimization(number_containers, IS, 0, file_name)
+    execute_gurobi_optimization(number_containers, IS, 1, file_name)
+
+
+
+
+    # execute_sensitivity_analysis(parameter_changes)
+    # parameter_changes = [
+    #     ["Truck.cost_per_container", "*2"],  # Double the truck cost
+    # ]
+    # model = {
+    #     "Truck": Truck
+    # }
+    # apply_change(parameter_changes, model)
+
+    #execute_sensitivity_analysis(parameter_changes, model)
+
+
+
+
+
+
 
 
 
