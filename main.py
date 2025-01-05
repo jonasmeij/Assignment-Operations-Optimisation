@@ -2,7 +2,8 @@ from gurobipy import *
 import folium
 from geopy.distance import geodesic
 from shapely.geometry import Point, LineString
-from Visualization import visualize_routes, visualize_schedule
+from Visualization import *
+
 
 #=============================================================================================================================
 #  Define Classes for Nodes, Containers, Arcs, Barges, and Trucks
@@ -80,15 +81,15 @@ def construct_network():
 
     # Define coordinates for each node (latitude, longitude)
     node_coords = {
-        0: (51.957979, 4.052421),  # Depot 0
-        1: (51.912345, 4.234567),  # Depot 1
-        2: (51.948060, 4.063992),  # Terminal 1
-        3: (51.955480, 4.052490),  # Terminal 2
-        4: (51.961111, 4.034722),  # Terminal 3
-        5: (51.906540, 4.122230),  # Terminal 4
-        6: (51.904251, 4.141221),
-        7: (51.957979, 4.052421),  # Depot 0
-        8: (51.912345, 4.234567)
+        0: (51.5363, 5.5244),  # Veghel
+        1: (51.5462, 5.0913),  # Tilburg
+        2: (51.960000, 4.040000),  # Terminal 1
+        3: (51.960000, 4.100000),  # Terminal 2
+        4: (51.930000, 4.040000),  # Terminal 3
+        5: (51.930000, 4.100000),  # Terminal 4
+        6: (51.900000, 4.040000),  # Terminal 5
+        7: (51.5363, 5.5244),  # Veghel
+        8: (51.5462, 5.0913)  # Tilburg
         # Terminal 5
     }
 
@@ -107,13 +108,25 @@ def construct_network():
         (4, 2, 3, 7, 9, 1, 5, 'E'),  # From Depot 1 to Terminal 4
         (5, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 5
         (6, 2, 6, 10, 14, 1, 2, 'E'),  # From Depot 1 to Terminal 1
+        (7, 1, 2, 5, 12, 0, 2, 'E'),  # From Depot 0 to Terminal 1
+        (8, 2, 4, 6, 10, 1, 3, 'E'),  # From Depot 1 to Terminal 2
+        (9, 1, 1, 4, 8, 0, 4, 'E'),  # From Depot 0 to Terminal 3
+        (10, 2, 3, 7, 9, 1, 5, 'E'),  # From Depot 1 to Terminal 4
+        (11, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 5
+        (12, 2, 6, 10, 14, 1, 2, 'E'),  # From Depot 1 to Terminal 1
         # Import Containers (from Terminals to Depots)
-        (7, 1, None, 3, 9, 2, 7, 'I'),  # From Terminal 1 to Depot 0
-        (8, 2, None, 2, 7, 3, 8, 'I'),  # From Terminal 2 to Depot 1
-        (9, 1, None, 5, 11, 4, 7, 'I'),  # From Terminal 3 to Depot 0
-        (10, 2, None, 6, 12, 5, 8, 'I'),  # From Terminal 4 to Depot 1
-        (11, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
-        (12, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
+        (13, 1, None, 3, 9, 2, 7, 'I'),  # From Terminal 1 to Depot 0
+        (14, 2, None, 2, 7, 3, 8, 'I'),  # From Terminal 2 to Depot 1
+        (15, 1, None, 5, 11, 4, 7, 'I'),  # From Terminal 3 to Depot 0
+        (16, 2, None, 6, 12, 5, 8, 'I'),  # From Terminal 4 to Depot 1
+        (17, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
+        (18, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
+        (20, 1, None, 3, 9, 2, 7, 'I'),  # From Terminal 1 to Depot 0
+        (21, 2, None, 2, 7, 3, 8, 'I'),  # From Terminal 2 to Depot 1
+        (22, 1, None, 5, 11, 4, 7, 'I'),  # From Terminal 3 to Depot 0
+        (23, 2, None, 6, 12, 5, 8, 'I'),  # From Terminal 4 to Depot 1
+        (24, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
+        (25, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
     ]
 
 
@@ -413,8 +426,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                 name=f"Barge_{k}_traverse_destination_{c}"
             )
 
-
-
     # (4) Import quantities loaded by barge k at sea terminal j
     for k in KB:
         for j in N:
@@ -450,9 +461,8 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                     name=f"ExportFlow_{j}_{k}"
                 )
                 # Explanation:
-                # Ensures that the net inflow of export containers at terminal j by barge k equals the total exports unloaded
+                # Ensures that the net inflow of export containers at terminal j by barge k equals the total exports unloaded    # (8)
 
-    # (8)
     for k in KB:
         for i in N:
             for j in N:
@@ -472,8 +482,6 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                 # If container c is assigned to barge k, ensure that barge k departs from the depot no earlier than the container's release date Rc[c]
                 # If f_ck[c, k] = 0, the constraint becomes t_jk >= 0, which is always true
 
-
-    #
     # (10)
     for k in KB:
         for i in N:
@@ -511,6 +519,7 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
                         t_jk[j, k] * Zcj[c, j] <= Dc[c] + (1 - f_ck[c, k]) * M,
                         name=f"ClosingTime_{c}_{j}_{k}"
                     )
+
     # ADDED (14) time of delivery is after time of pickup
     for c in C:
         origin = containers[c].origin
@@ -543,6 +552,17 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     #  Extract Variable Values
     #=========================================================================================================================
 
+    y_ijk_values = {}
+    z_ijk_values = {}
+    for k in KB:
+        y_ijk_values[k] = {}
+        z_ijk_values[k] = {}
+        for (i, j), var in y_ijk[k].items():
+            y_ijk_values[k][(i, j)] = var.X
+        for (i, j), var in z_ijk[k].items():
+            z_ijk_values[k][(i, j)] = var.X
+
+
     # Extract values for f_ck variables (container allocations)
     f_ck_values = {}
     for key, var in f_ck.items():
@@ -560,12 +580,28 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     for key, var in t_jk.items():
         t_jk_values[key] = var.X  # Store the optimized value
 
+    #extract values for pjk
+    p_jk_values = {}
+    for key, var in p_jk.items():
+        p_jk_values[key] = var.X
+
+    #extract values for djk
+    d_jk_values = {}
+    for key, var in d_jk.items():
+        d_jk_values[key] = var.X
+
     # Collect variables into a dictionary for ease of access
     variables = {
         'f_ck': f_ck_values,
         'x_ijk': x_ijk_values,
-        't_jk': t_jk_values
+        't_jk': t_jk_values,
+        'y_ijk': y_ijk_values,
+        'z_ijk': z_ijk_values,
+        "p_jk": p_jk_values,
+        "d_jk" : d_jk_values
+
     }
+
 
     #=========================================================================================================================
     #  Output Results and Visualization
@@ -575,10 +611,17 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
     print_model_result(model, variables, barges, containers)
 
     # Visualize the barge and truck routes on a map
-    visualize_routes(nodes, barges, variables, containers, node_coords,"small.png")
+    # visualize_routes(nodes, barges, variables, containers, node_coords,"small.html")
+
+    #Visualize routes static
+    # visualize_routes_static(nodes,barges,variables,containers,node_coords,"static_small.png")
+    # visualize_routes_terminals(nodes,barges,variables,containers,node_coords,"static_small_terminal.png")
 
     # Visualize the schedule in gantt chart format of container movements
     visualize_schedule(nodes, barges, variables, containers)
+
+    #visualis capcity and timing
+    plot_barge_timing(nodes, barges, variables)
 
 
 #=============================================================================================================================
@@ -588,4 +631,5 @@ def barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_co
 if __name__ == '__main__':
     nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy = construct_network()
     barge_scheduling_problem(nodes, arcs, containers, barges, truck, HT, node_coords,depot_to_dummy)
+
 

@@ -430,7 +430,7 @@ def random_generation_containers(nodes, node_coords,container_amount, buffer_tim
      # Number of containers to generate
     containers_data = []
 
-    n_depots = 5  # Node IDs 0-4
+    n_depots = 1  # Node IDs 0-4
     n_terminals = 20  # Node IDs 5-24
 
     # Seed for reproducibility
@@ -450,7 +450,7 @@ def random_generation_containers(nodes, node_coords,container_amount, buffer_tim
             # Release date is before or at opening_date
             release_date = random.randint(0, opening_date)
 
-            origin = random.randint(0, 4)  # Random depot origin (0-4)
+            origin = 0 # Random depot origin (0-4)
             destination = random.randint(5, 24)  # Random terminal destination (5-24)
 
         else:  # Import containers
@@ -462,7 +462,7 @@ def random_generation_containers(nodes, node_coords,container_amount, buffer_tim
             closing_date = opening_date + buffer_time + random.randint(0, max_closing_date - (opening_date + buffer_time))
 
             origin = random.randint(5, 24)  # Random terminal origin (5-24)
-            destination = random.randint(25, 29)  # Random depot arrival destination (25-29)
+            destination = 25   # Random depot arrival destination (25-29)
 
         # Cap closing_date to maximum allowed
         if closing_date > 196*60:
@@ -507,10 +507,10 @@ def construct_network(container_amount):
 
     nodes = {
         0: Node(0, 'depot'),  # Veghel Depot
-        1: Node(1, 'depot'),  #  (e.g., Tilburg Depot)
-        2: Node(2, 'depot'),  # (e.g., Eindhoven Depot)
-        3: Node(3, 'depot'),  #  (e.g., Nijmegen Depot)
-        4: Node(4, 'depot'),  # (e.g., Utrecht Depot)
+        # 1: Node(1, 'depot'),  #  (e.g., Tilburg Depot)
+        # 2: Node(2, 'depot'),  # (e.g., Eindhoven Depot)
+        # 3: Node(3, 'depot'),  #  (e.g., Nijmegen Depot)
+        # 4: Node(4, 'depot'),  # (e.g., Utrecht Depot)
 
         5: Node(5, 'terminal'),  # RWG
         6: Node(6, 'terminal'),  # APMT Maasvlakte II
@@ -533,11 +533,11 @@ def construct_network(container_amount):
         23: Node(23, 'terminal'),  # Maasvlakte Olie Terminal
         24: Node(24, 'terminal'),  # Koole Tankstorage
 
-        25: Node(25, 'depot_arr'),  # Dummy arrival for Veghel Depot
-        26: Node(26, 'depot_arr'),  # Tilburg
-        27: Node(27, 'depot_arr'),  # Eindhoven
-        28: Node(28, 'depot_arr'),  # Nijmegen
-        29: Node(29, 'depot_arr')   # Utrecht
+        25: Node(25, 'depot_arr')  # Dummy arrival for Veghel Depot
+        # 26: Node(26, 'depot_arr'),  # Tilburg
+        # 27: Node(27, 'depot_arr'),  # Eindhoven
+        # 28: Node(28, 'depot_arr'),  # Nijmegen
+        # 29: Node(29, 'depot_arr')   # Utrecht
     }
 
     # Define coordinates for each node (latitude, longitude)
@@ -545,10 +545,10 @@ def construct_network(container_amount):
     node_coords = {
         # Depots (Inland Locations)
         0: (51.5022, 5.6875),  # Veghel Depot
-        1: (51.5667, 5.0689),  # Tilburg Depot
-        2: (51.4416, 5.4697),  # Eindhoven Depot
-        3: (51.8126, 5.8372),  # Nijmegen Depot
-        4: (52.0907, 5.1214),  # Utrecht Depot
+        # 1: (51.5667, 5.0689),  # Tilburg Depot
+        # 2: (51.4416, 5.4697),  # Eindhoven Depot
+        # 3: (51.8126, 5.8372),  # Nijmegen Depot
+        # 4: (52.0907, 5.1214),  # Utrecht Depot
 
         # Terminals (Broader Rotterdam Area)
         5: (51.9200, 3.9900),  # RWG (West)
@@ -573,19 +573,19 @@ def construct_network(container_amount):
         24: (51.8600, 4.1800),  # Botlek Terminal (Southwest)
 
         # Dummy arrival nodes for depots (same coords as their corresponding depot)
-        25: (51.5022, 5.6875),  # Veghel Depot_arr
-        26: (51.5667, 5.0689),  # Tilburg Depot_arr
-        27: (51.4416, 5.4697),  # Eindhoven Depot_arr
-        28: (51.8126, 5.8372),  # Nijmegen Depot_arr
-        29: (52.0907, 5.1214)  # Utrecht Depot_arr
+        25: (51.5022, 5.6875)  # Veghel Depot_arr
+        # 26: (51.5667, 5.0689),  # Tilburg Depot_arr
+        # 27: (51.4416, 5.4697),  # Eindhoven Depot_arr
+        # 28: (51.8126, 5.8372),  # Nijmegen Depot_arr
+        # 29: (52.0907, 5.1214)  # Utrecht Depot_arr
     }
 
     depot_to_dummy = {
-        0: 25,  # depot 0 matches with dummy node 25
-        1: 26,
-        2: 27,
-        3: 28,
-        4: 29
+        0: 25  # depot 0 matches with dummy node 25
+        # 1: 26,
+        # 2: 27,
+        # 3: 28,
+        # 4: 29
     }
 
     # Define containers with their attributes
@@ -618,10 +618,10 @@ def construct_network(container_amount):
     # Define barges with their capacities and fixed costs
     barges_data = [
         (1, 104, 3600, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
-        (2, 99, 3500, 1),
-        (3, 81, 2800, 2),
-        (4, 52, 1800, 3),
-        (5, 28, 3700, 4)
+        (2, 99, 3500, 0),
+        (3, 81, 2800, 0),
+        (4, 52, 1800, 0),
+        (5, 28, 3700, 0)
     ]
     barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
               for barge_id, capacity, fixed_cost, origin in barges_data}
@@ -1041,9 +1041,17 @@ def barge_scheduling_problem(
     # Set Gurobi parameters
     model.setParam('OutputFlag', True)
     model.setParam('StartNodeLimit',2000)
-    # Enable solver output
-    model.setParam('TimeLimit', 1800)      # Set a time limit of 5 minutes (300 seconds)
+    model.setParam("MIPFocus", 3)
+    model.setParam("presolve",2)
+    model.setParam("heuristics",0.7)
+    model.setParam("Cuts",3)
+    model.setParam("MIRCuts",2)
 
+
+    # Enable solver output
+    model.setParam('TimeLimit', 6000)      # Set a time limit of 100 minutes
+
+    model.update()
     # Start the optimization process
     model.optimize()
 
@@ -1087,12 +1095,12 @@ def barge_scheduling_problem(
     print_model_result(model, variables, barges, containers)
 
     # Visualize the barge and truck routes on a map
-    # visualize_routes_static(nodes, barges, variables, containers, node_coords,output_filename_full=output_base+"route_including_depot.png")
-    # visualize_routes(nodes, barges, variables, containers, node_coords,file_name=output_base+"interactive_route.html")
+    visualize_routes_static(nodes, barges, variables, containers, node_coords,output_filename_full=output_base+"route_including_depot.png")
+    visualize_routes(nodes, barges, variables, containers, node_coords,file_name=output_base+"interactive_route.html")
     #
     # # Visualize the schedule in gantt chart format of container movements
     visualize_schedule_random(nodes, barges, variables, containers,output_file=output_base+"gantt_schedule.png")
-    # visualize_routes_terminals(nodes, barges, variables, containers, node_coords, output_file=output_base+"route_terminals.png")
+    visualize_routes_terminals(nodes, barges, variables, containers, node_coords, output_file=output_base+"route_terminals.png")
 
 
 
@@ -1135,8 +1143,8 @@ def execute_gurobi_optimization(nr_c,IS):
 
 
 if __name__ == "__main__":
-    number_containers = 100
-    IS = True
+    number_containers = 300
+    IS = False
     execute_gurobi_optimization(number_containers,IS)
 
 

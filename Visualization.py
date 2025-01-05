@@ -842,41 +842,16 @@ def visualize_routes_terminals(
     cmap = cm.get_cmap('tab20', len(barges))
     barge_colors = {barge_id: cmap(i) for i, barge_id in enumerate(barges.keys())}
 
-    # Define edge start and end points for barges in the top-right corner
-    num_barges = len(barges)
-    edge_points_top = [
-        (lat_max, lon_min + (lon_max - lon_min) / 2 + i * (lon_max - lon_min) / (2 * num_barges))
-        for i in range(num_barges)
-    ]  # Right half of the top edge
-    edge_points_right = [
-        (lat_min + (lat_max - lat_min) / 2 + i * (lat_max - lat_min) / (2 * num_barges), lon_max)
-        for i in range(num_barges)
-    ]  # Top half of the right edge
-    barge_edges = {barge_id: edge_points_top[i] if i % 2 == 0 else edge_points_right[i]
-                   for i, barge_id in enumerate(barges.keys())}
-
     # Plot barge routes
     x_ijk = variables.get("x_ijk", {})
     for barge_id, routes in x_ijk.items():
-        # Skip barges with only one arc
-        if sum(1 for (_, _), var in routes.items() if hasattr(var, 'X') and var.X > 0.5) <= 1:
-            continue
-
-        # Get the barge's start and end edge points
-        edge_point = barge_edges[barge_id]
 
         # Collect route coordinates
-        route_coords = [edge_point]  # Start from the edge
+        route_coords = []  # Start from the edge
         for (i, j), var in routes.items():
             if hasattr(var, 'X') and var.X > 0.5 and nodes[i].type == "terminal" and nodes[j].type == "terminal":
                 route_coords.append(node_coords[i])
                 route_coords.append(node_coords[j])
-        route_coords.append(edge_point)  # End at the same edge point
-
-        # Remove duplicate consecutive points
-        route_coords = [route_coords[0]] + [
-            coord for i, coord in enumerate(route_coords[1:]) if coord != route_coords[i]
-        ]
 
         # Extract latitudes and longitudes for plotting
         lats = [coord[0] for coord in route_coords]
@@ -902,6 +877,8 @@ def visualize_routes_terminals(
                 transform=ccrs.PlateCarree()
             )
 
+
+
     # Add legend
     ax.legend(loc='upper left', fontsize=10)
     ax.set_title("Barge Routes with Terminals", fontsize=14)
@@ -913,6 +890,226 @@ def visualize_routes_terminals(
 
 
 
+def plot_barge_timing(
+    nodes,
+    barges,
+    variables,
+    offset_x=-1.0,    # horizontal shift for the *first* bottom node text
+    L=0.05,
+    gamma=0.05
+):
+    """
+    Splits the Gantt chart so each barge is plotted in its own figure.
+    For each arc (i->j) used by barge k:
+      - Draw a horizontal bar from t_jk[(i,k)] to t_jk[(j,k)].
+      - The travel time is placed at the midpoint, either above or below the bar, depending on flip_text.
+      - The node-arrival text is placed at the arrival time, also above/below the bar.
+      - The very first bottom text box can be offset horizontally (offset_x).
+      - We illustrate a small example for p_jk, d_jk but in practice you'd have these from your model.
 
+    Args:
+        nodes (dict): Node objects, each with 'type' (e.g. 'terminal').
+        barges (dict): Barge objects, e.g. { barge_id: barge_obj }
+        variables (dict): Must include x_ijk, t_jk.
+                          p_jk, d_jk can be built or read from the model.
+        offset_x (float): Horizontal shift for the first node text placed *below* the bar.
+        L (float): Handling time factor (multiplied by total containers at each node).
+        gamma (float): Penalty parameter, displayed if the node is a terminal.
+    """
+    import matplotlib.pyplot as plt
+    from collections import defaultdict
 
+    def val(x):
+        """Helper: return float if x is a Gurobi var or already float."""
+        return x.X if hasattr(x, "X") else x
 
+    # ------------------------------------------------------------------
+    # 1) Hardcode or retrieve container-handling info (p_jk, d_jk)
+    #    Here, we demonstrate with a small example dictionary.
+    # ------------------------------------------------------------------
+    def build_hardcoded_p_d():
+        p_jk = defaultdict(int)
+        d_jk = defaultdict(int)
+        # Example container allocations: container_id -> (barge_id, origin_node, destination_node)
+        allocations = {
+            1 : (1, 0, 2),
+            2 : (2, 1, 3),
+            3 : (1, 0, 4),
+            4 : (2, 1, 5),
+            5 : (3, 0, 6),
+            6 : ("Truck", 1, 2),
+            7 : (1, 2, 7),
+            8 : ("Truck", 3, 8),
+            9 : (1, 4, 7),
+            10: (2, 5, 8),
+            11: (3, 6, 7),
+            12: (2, 2, 8),
+        }
+        for c, (barge_id, origin, destination) in allocations.items():
+            if barge_id == "Truck":
+                continue
+            p_jk[(origin, barge_id)] += 1
+            d_jk[(destination, barge_id)] += 1
+        return dict(p_jk), dict(d_jk)
+
+    # If not present in variables, build them
+    p_jk_dict, d_jk_dict = build_hardcoded_p_d()
+    variables['p_jk'] = p_jk_dict
+    variables['d_jk'] = d_jk_dict
+
+    # ------------------------------------------------------------------
+    # 2) Extract the variables we need from 'variables'
+    # ------------------------------------------------------------------
+    x_ijk = variables['x_ijk']  # route usage
+    t_jk  = variables['t_jk']   # barge arrival times
+    p_jk  = variables['p_jk']   # # containers loaded at (node, barge)
+    d_jk  = variables['d_jk']   # # containers unloaded at (node, barge)
+
+    # Sort barge IDs for consistency
+    barge_ids = sorted(barges.keys())
+
+    # ------------------------------------------------------------------
+    # 3) Iterate over each barge and create a separate figure
+    # ------------------------------------------------------------------
+    for k in barge_ids:
+
+        # Gather arcs for barge k
+        used_arcs = []
+        if k in x_ijk:
+            for (i, j), route_var in x_ijk[k].items():
+                if val(route_var) > 0.5:
+                    dep_t = val(t_jk[(i, k)])
+                    arr_t = val(t_jk[(j, k)])
+                    used_arcs.append((i, j, dep_t, arr_t))
+
+        # If no arcs, skip
+        if not used_arcs:
+            print(f"Barge {k} has no arcs in the solution.")
+            continue
+
+        # Sort arcs by departure time
+        used_arcs.sort(key=lambda arc: arc[2])
+
+        # Create one figure for this barge
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # We'll keep them all on a single "lane" (y=0)
+        current_lane = 0
+        # If you want multiple arcs stacked, you'd increment current_lane for each arc;
+        # for now, we keep everything on the same y-level for clarity.
+
+        lane_height = 4.0  # Extra vertical space if you did want to stack arcs
+
+        # We'll flip top/bottom for each arc, toggling for both the leg time & node text
+        flip_text = False
+        first_bottom_text_placed = False  # Track if we've placed any "below" text yet
+
+        for (i, j, dep_t, arr_t) in used_arcs:
+            duration = arr_t - dep_t
+            if duration < 0:
+                duration = 0
+
+            # Color arc differently if node j is a terminal
+            color = 'tab:blue'
+            if nodes[j].type == 'terminal':
+                color = 'tab:orange'
+
+            # Draw the bar from dep_t to arr_t
+            ax.barh(
+                current_lane, duration,
+                left=dep_t, height=0.6,
+                color=color, edgecolor='black', alpha=0.8
+            )
+
+            # We'll place the leg time at midpoint,
+            # and the node text at arrival time—both above or below the bar.
+            mid_time = dep_t + duration / 2
+
+            # Handling info
+            load_i   = p_jk.get((j, k), 0)
+            unload_e = d_jk.get((j, k), 0)
+            total_handled = load_i + unload_e
+            handle_time   = L * total_handled
+            departure_time= arr_t + handle_time
+
+            # Identify next node
+            next_nodes = []
+            for (jj, m), rv in x_ijk[k].items():
+                if jj == j and val(rv) > 0.5:
+                    next_nodes.append(m)
+            next_node = next_nodes[0] if next_nodes else None
+
+            # Build multiline text for node j
+            node_text_lines = [
+                f"Node {j}",
+                f"Arr: {arr_t:.2f}",
+                f"Imp: {load_i}, Exp: {unload_e}",
+                f"Handle: {handle_time:.2f}",
+                f"Dep: {departure_time:.2f}",
+                f"Next: {next_node}",
+            ]
+            if nodes[j].type == 'terminal':
+                node_text_lines.append(f"Penalty: γ={gamma}")
+            node_text = "\n".join(node_text_lines)
+
+            # Decide if we go above or below
+            if flip_text:
+                # Place them above
+                time_y_offset = 0.3
+                node_y_offset = 0.7
+                va_leg_time   = 'bottom'
+                va_node_text  = 'bottom'
+                text_x_legtime = mid_time
+                text_x_node    = arr_t
+            else:
+                # Place them below
+                time_y_offset = -0.3
+                node_y_offset = -0.7
+                va_leg_time   = 'top'
+                va_node_text  = 'top'
+                text_x_legtime = mid_time
+                text_x_node    = arr_t
+
+                # If this is the *very first* time we're placing text below, shift node text horizontally
+                if not first_bottom_text_placed:
+                    text_x_node += offset_x
+                    first_bottom_text_placed = True
+
+            # 1) The leg time text at the midpoint
+            ax.text(
+                text_x_legtime, current_lane + time_y_offset,
+                f"{duration:.2f}h",  # just the leg/travel time
+                fontsize=8,
+                ha='center',
+                va=va_leg_time,
+                bbox=dict(facecolor='white', edgecolor='black', alpha=0.6)
+            )
+
+            # 2) The node text at arrival time
+            ax.text(
+                text_x_node, current_lane + node_y_offset,
+                node_text,
+                fontsize=8,
+                ha='left',
+                va=va_node_text,
+                bbox=dict(facecolor='white', edgecolor='black', alpha=0.6)
+            )
+
+            # Flip for the next arc
+            flip_text = not flip_text
+
+        # Basic axis labeling and styling
+        ax.set_xlabel("Time (hours)", fontsize=11)
+        ax.set_ylabel("")
+        ax.set_yticks([])
+        ax.set_title(f"Barge {k}", fontsize=12)
+        ax.grid(True, axis='x', linestyle='--', alpha=0.5)
+
+        # Adjust x/y-limits for clarity
+        min_t = min(a[2] for a in used_arcs)
+        max_t = max(a[3] for a in used_arcs)
+        ax.set_xlim(left=min_t - 2, right=max_t + 5)
+        ax.set_ylim([current_lane - 2, current_lane + 2])
+
+        plt.tight_layout()
+        plt.show()  # one figure per barge
