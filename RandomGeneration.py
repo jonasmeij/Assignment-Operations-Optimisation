@@ -144,6 +144,7 @@ def check_feasibility(
     container: 'Container',
     tentative_route: List[int],
     containers: Dict[int, 'Container'],
+
     master_routes: Dict[int, List[int]],
     compute_travel_time
 ) -> Tuple[bool, float]:
@@ -506,7 +507,7 @@ def construct_network(container_amount):
     # Terminals: 5-24
 
     nodes = {
-        0: Node(0, 'depot'),  # Veghel Depot
+        0: Node(0, 'depot'),  # Veghel
         # 1: Node(1, 'depot'),  #  (e.g., Tilburg Depot)
         # 2: Node(2, 'depot'),  # (e.g., Eindhoven Depot)
         # 3: Node(3, 'depot'),  #  (e.g., Nijmegen Depot)
@@ -731,8 +732,14 @@ def barge_scheduling_problem(
     Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
     L = 15     # Handling time per container in minutes (e.g., loading/unloading time)
+<<<<<<< Updated upstream
     gamma = 100 # Penalty cost for visiting sea terminals
 
+=======
+    gamma = 100 - l * 5 + 5 - 5 * cheat[l] # Penalty cost for visiting sea terminals
+    changed_values.update({"gamma": gamma})
+    changed_values.update({"Tij": Tij})
+>>>>>>> Stashed changes
     #=========================================================================================================================
     #  Define Decision Variables
     #=========================================================================================================================
@@ -1104,13 +1111,51 @@ def barge_scheduling_problem(
 
 
 
+<<<<<<< Updated upstream
 def execute_gurobi_optimization(nr_c,IS):
+=======
+def execute_gurobi_optimization(nr_c, IS, i, j, k, l, m, Analysis, file_name="results_pc.csv"):
+>>>>>>> Stashed changes
     """
     Executes the greedy algorithm, optimizes with Gurobi, and maintains consistent output and visualization.
     """
     # Step 1: Execute Greedy Assignment
     container_amount = nr_c
+<<<<<<< Updated upstream
     nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy = construct_network(container_amount=container_amount)
+=======
+    nodes, arcs, containers, node_coords, depot_to_dummy = construct_network(container_amount=container_amount)
+    changed_values = {}
+    cheat = np.ones(20)
+    cheat[-1] = 0
+
+    HT = {1: 200,
+          2: 230}
+
+    barges_data = [
+        (1, 15+m-cheat[m]*6+1, 250 + 150*j+150, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
+        (2, 11+m-cheat[m]*6+1, 200 + 120*j+150, 0),
+        (3, 7+m-cheat[m]*6+1, 160 + 72*j+150, 0)
+    ]
+    barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
+              for barge_id, capacity, fixed_cost, origin in barges_data}
+    changed_values.update({"barges": barges_data})
+    # truck = Truck(cost_per_container=HT)
+
+    #CHANGE PARAMETERS
+    Count = max(i, j, k, l, m)
+
+
+    # Increase the truck costs in HT
+    for truck_id, truck_cost in HT.items():
+        HT[truck_id] = HT[truck_id] + 15 * i - cheat[i] * 65 + 15
+    changed_values.update({"Trucks": HT})
+    # Update the truck object with the new HT values
+
+    # Check the updated truck costs
+    print(f"Updated truck costs: {HT}", f"Updated barge costs: {barges[1].fixed_cost, barges[2].fixed_cost, barges[3].fixed_cost}", f"Count = {Count}")
+
+>>>>>>> Stashed changes
 
     master_route_sequence = [
         5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -1145,8 +1190,103 @@ def execute_gurobi_optimization(nr_c,IS):
 if __name__ == "__main__":
     number_containers = 300
     IS = False
+<<<<<<< Updated upstream
     execute_gurobi_optimization(number_containers,IS)
+=======
+    file_name = "results_pc.csv"
+
+
+    #execute_gurobi_optimization(number_containers, IS, 0, 0, 0, 0, 0, "Base Case", file_name)
+    # for i in range(9,20):
+    #     execute_gurobi_optimization(number_containers, IS, i, -1, 0, -1, -1, "Truck costs", file_name)
+    # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, i, 0, -1, -1, "Barge costs", file_name)
+    # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, -1, 0, -1, i, "Barge capacity", file_name)
+    # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, -1, i, -1, -1, "Travel time", file_name)
+    # for i in range(16, 20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, -1, 0, i, -1, "Penalty cost", file_name)
+
+state = 1  # Set to 1 to run this section
+
+if state:
+    file_name = "results_pc.csv"
+
+    # Read the CSV file (adjust header and skiprows as needed)
+    df = pd.read_csv(file_name, header=None, skiprows=1)
+
+    # Manually set column names (adjust these as needed)
+    df.columns = ['Count', 'Analysis', 'Objective Value', 'Variables', 'Changed value']
+    print(df.head())
+
+
+    # Define safe_eval to safely convert string representations of lists
+    def safe_eval(val):
+        try:
+            return ast.literal_eval(val) if isinstance(val, str) else val
+        except (ValueError, SyntaxError):
+            return None
+
+
+    # Convert the 'Objective Value' column from string to an actual list
+    df['Objective Value'] = df['Objective Value'].apply(safe_eval)
+
+    # Extract the first element of the 'Objective Value' list as the objective value
+    df['ObjValue_First'] = df['Objective Value'].apply(
+        lambda arr: arr[0] if isinstance(arr, list) and len(arr) > 0 else None
+    )
+
+    # Extract the gap (assumed to be the third element in the list) and convert to percent
+    df['Gap Percent'] = df['Objective Value'].apply(
+        lambda arr: 100 * arr[2] if isinstance(arr, list) and len(arr) > 2 and arr[2] is not None else None
+    )
+
+    # Debug: check the converted values
+    print(df[['Objective Value', 'ObjValue_First', 'Gap Percent']].head(10))
+
+    # Filter the DataFrame to the desired rows for plotting (adjust indices as necessary)
+    plot_df = df.iloc[205:223]
+    count = plot_df['Count']
+    obj_value = plot_df['ObjValue_First']
+    gap_percent = plot_df['Gap Percent']
+
+    # Create a larger plot with two y-axes
+    fig, ax1 = plt.subplots(figsize=(14, 8))
+
+    # Plot Objective Value on the left y-axis
+    color_obj = 'red'
+    ln1 = ax1.plot(count, obj_value, marker='s', linestyle='-', color=color_obj, label='Objective Value')
+    ax1.set_xlabel('Count', color='black')
+    ax1.set_ylabel('Objective Value', color='black')
+    ax1.tick_params(axis='x', colors='black')
+    ax1.tick_params(axis='y', colors='black')
+    ax1.grid(True)
+
+    # Create a second y-axis for Gap Percent
+    ax2 = ax1.twinx()
+    color_gap = 'blue'
+    ln2 = ax2.plot(count, gap_percent, marker='o', linestyle='-', color=color_gap, label='Gap Percent')
+    ax2.set_ylabel('Gap in Percent', color='black')
+    ax2.tick_params(axis='y', colors='black')
+
+    # Combine legends from both axes
+    lns = ln1 + ln2
+    labels = [l.get_label() for l in lns]
+    ax1.legend(lns, labels, loc='best')
+
+    plt.title('Objective Value and Gap Percent vs. Count', color='black')
+    plt.tight_layout()
+    plt.show()
 
 
 
+
+
+
+
+
+
+
+>>>>>>> Stashed changes
 
