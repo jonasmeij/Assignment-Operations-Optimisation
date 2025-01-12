@@ -108,25 +108,25 @@ def construct_network():
         (4, 2, 3, 7, 9, 1, 5, 'E'),  # From Depot 1 to Terminal 4
         (5, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 5
         (6, 2, 6, 10, 14, 1, 2, 'E'),  # From Depot 1 to Terminal 1
-        (7, 1, 2, 5, 12, 0, 2, 'E'),  # From Depot 0 to Terminal 1
-        (8, 2, 4, 6, 10, 1, 3, 'E'),  # From Depot 1 to Terminal 2
-        (9, 1, 1, 4, 8, 0, 4, 'E'),  # From Depot 0 to Terminal 3
-        (10, 2, 3, 7, 9, 1, 5, 'E'),  # From Depot 1 to Terminal 4
-        (11, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 5
-        (12, 2, 6, 10, 14, 1, 2, 'E'),  # From Depot 1 to Terminal 1
+        # (7, 1, 2, 5, 12, 0, 2, 'E'),  # From Depot 0 to Terminal 1
+        # (8, 2, 4, 6, 10, 1, 3, 'E'),  # From Depot 1 to Terminal 2
+        # (9, 1, 1, 4, 8, 0, 4, 'E'),  # From Depot 0 to Terminal 3
+        # (10, 2, 3, 7, 9, 1, 5, 'E'),  # From Depot 1 to Terminal 4
+        # (11, 1, 5, 9, 13, 0, 6, 'E'),  # From Depot 0 to Terminal 5
+        # (12, 2, 6, 10, 14, 1, 2, 'E'),  # From Depot 1 to Terminal 1
         # Import Containers (from Terminals to Depots)
         (13, 1, None, 3, 9, 2, 7, 'I'),  # From Terminal 1 to Depot 0
         (14, 2, None, 2, 7, 3, 8, 'I'),  # From Terminal 2 to Depot 1
         (15, 1, None, 5, 11, 4, 7, 'I'),  # From Terminal 3 to Depot 0
         (16, 2, None, 6, 12, 5, 8, 'I'),  # From Terminal 4 to Depot 1
         (17, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
-        (18, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
-        (20, 1, None, 3, 9, 2, 7, 'I'),  # From Terminal 1 to Depot 0
-        (21, 2, None, 2, 7, 3, 8, 'I'),  # From Terminal 2 to Depot 1
-        (22, 1, None, 5, 11, 4, 7, 'I'),  # From Terminal 3 to Depot 0
-        (23, 2, None, 6, 12, 5, 8, 'I'),  # From Terminal 4 to Depot 1
-        (24, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
-        (25, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
+        (18, 2, None, 9, 15, 2, 8, 'I')  # From Terminal 1 to Depot 1
+        # (20, 1, None, 3, 9, 2, 7, 'I'),  # From Terminal 1 to Depot 0
+        # (21, 2, None, 2, 7, 3, 8, 'I'),  # From Terminal 2 to Depot 1
+        # (22, 1, None, 5, 11, 4, 7, 'I'),  # From Terminal 3 to Depot 0
+        # (23, 2, None, 6, 12, 5, 8, 'I'),  # From Terminal 4 to Depot 1
+        # (24, 1, None, 8, 14, 6, 7, 'I'),  # From Terminal 5 to Depot 0
+        # (25, 2, None, 9, 15, 2, 8, 'I'),  # From Terminal 1 to Depot 1
     ]
 
 

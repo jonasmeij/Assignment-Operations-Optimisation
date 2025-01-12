@@ -1070,6 +1070,9 @@ def plot_barge_timing(
                 text_x_legtime = mid_time
                 text_x_node    = arr_t
 
+                if k == 2:
+                    offset_x =-2
+
                 # If this is the *very first* time we're placing text below, shift node text horizontally
                 if not first_bottom_text_placed:
                     text_x_node += offset_x
@@ -1079,7 +1082,7 @@ def plot_barge_timing(
             ax.text(
                 text_x_legtime, current_lane + time_y_offset,
                 f"{duration:.2f}h",  # just the leg/travel time
-                fontsize=8,
+                fontsize=13,
                 ha='center',
                 va=va_leg_time,
                 bbox=dict(facecolor='white', edgecolor='black', alpha=0.6)
@@ -1089,7 +1092,7 @@ def plot_barge_timing(
             ax.text(
                 text_x_node, current_lane + node_y_offset,
                 node_text,
-                fontsize=8,
+                fontsize=13,
                 ha='left',
                 va=va_node_text,
                 bbox=dict(facecolor='white', edgecolor='black', alpha=0.6)
@@ -1102,7 +1105,7 @@ def plot_barge_timing(
         ax.set_xlabel("Time (hours)", fontsize=11)
         ax.set_ylabel("")
         ax.set_yticks([])
-        ax.set_title(f"Barge {k}", fontsize=12)
+
         ax.grid(True, axis='x', linestyle='--', alpha=0.5)
 
         # Adjust x/y-limits for clarity
