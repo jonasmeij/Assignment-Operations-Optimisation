@@ -1,3 +1,4 @@
+import numpy as np
 from gurobipy import *
 import folium
 from geopy.distance import geodesic
@@ -13,6 +14,8 @@ from geopy.distance import geodesic
 import folium
 import pandas as pd
 import os
+import matplotlib.pyplot as plt
+import ast
 
 class Node:
     def __init__(self, node_id, node_type='terminal'):
@@ -452,7 +455,7 @@ def random_generation_containers(nodes, node_coords,container_amount, buffer_tim
             # Release date is before or at opening_date
             release_date = random.randint(0, opening_date)
 
-            origin = random.randint(0, 4)  # Random depot origin (0-4)
+            origin = 0 # Random depot origin (0-4)
             destination = random.randint(5, 24)  # Random terminal destination (5-24)
 
         else:  # Import containers
@@ -464,7 +467,7 @@ def random_generation_containers(nodes, node_coords,container_amount, buffer_tim
             closing_date = opening_date + buffer_time + random.randint(0, max_closing_date - (opening_date + buffer_time))
 
             origin = random.randint(5, 24)  # Random terminal origin (5-24)
-            destination = random.randint(25, 29)  # Random depot arrival destination (25-29)
+            destination = 25  # Random depot arrival destination (25-29)
 
         # Cap closing_date to maximum allowed
         if closing_date > 196*60:
@@ -509,10 +512,10 @@ def construct_network(container_amount):
 
     nodes = {
         0: Node(0, 'depot'),  # Veghel Depot
-        1: Node(1, 'depot'),  #  (e.g., Tilburg Depot)
-        2: Node(2, 'depot'),  # (e.g., Eindhoven Depot)
-        3: Node(3, 'depot'),  #  (e.g., Nijmegen Depot)
-        4: Node(4, 'depot'),  # (e.g., Utrecht Depot)
+        # 1: Node(1, 'depot'),  #  (e.g., Tilburg Depot)
+        # 2: Node(2, 'depot'),  # (e.g., Eindhoven Depot)
+        # 3: Node(3, 'depot'),  #  (e.g., Nijmegen Depot)
+        # 4: Node(4, 'depot'),  # (e.g., Utrecht Depot)
 
         5: Node(5, 'terminal'),  # RWG
         6: Node(6, 'terminal'),  # APMT Maasvlakte II
@@ -535,11 +538,11 @@ def construct_network(container_amount):
         23: Node(23, 'terminal'),  # Maasvlakte Olie Terminal
         24: Node(24, 'terminal'),  # Koole Tankstorage
 
-        25: Node(25, 'depot_arr'),  # Dummy arrival for Veghel Depot
-        26: Node(26, 'depot_arr'),  # Tilburg
-        27: Node(27, 'depot_arr'),  # Eindhoven
-        28: Node(28, 'depot_arr'),  # Nijmegen
-        29: Node(29, 'depot_arr')   # Utrecht
+        25: Node(25, 'depot_arr')  # Dummy arrival for Veghel Depot
+        # 26: Node(26, 'depot_arr'),  # Tilburg
+        # 27: Node(27, 'depot_arr'),  # Eindhoven
+        # 28: Node(28, 'depot_arr'),  # Nijmegen
+        # 29: Node(29, 'depot_arr')   # Utrecht
     }
 
     # Define coordinates for each node (latitude, longitude)
@@ -547,10 +550,10 @@ def construct_network(container_amount):
     node_coords = {
         # Depots (Inland Locations)
         0: (51.5022, 5.6875),  # Veghel Depot
-        1: (51.5667, 5.0689),  # Tilburg Depot
-        2: (51.4416, 5.4697),  # Eindhoven Depot
-        3: (51.8126, 5.8372),  # Nijmegen Depot
-        4: (52.0907, 5.1214),  # Utrecht Depot
+        # 1: (51.5667, 5.0689),  # Tilburg Depot
+        # 2: (51.4416, 5.4697),  # Eindhoven Depot
+        # 3: (51.8126, 5.8372),  # Nijmegen Depot
+        # 4: (52.0907, 5.1214),  # Utrecht Depot
 
         # Terminals (Broader Rotterdam Area)
         5: (51.9200, 3.9900),  # RWG (West)
@@ -575,19 +578,19 @@ def construct_network(container_amount):
         24: (51.8600, 4.1800),  # Botlek Terminal (Southwest)
 
         # Dummy arrival nodes for depots (same coords as their corresponding depot)
-        25: (51.5022, 5.6875),  # Veghel Depot_arr
-        26: (51.5667, 5.0689),  # Tilburg Depot_arr
-        27: (51.4416, 5.4697),  # Eindhoven Depot_arr
-        28: (51.8126, 5.8372),  # Nijmegen Depot_arr
-        29: (52.0907, 5.1214)  # Utrecht Depot_arr
+        25: (51.5022, 5.6875)  # Veghel Depot_arr
+        # 26: (51.5667, 5.0689),  # Tilburg Depot_arr
+        # 27: (51.4416, 5.4697),  # Eindhoven Depot_arr
+        # 28: (51.8126, 5.8372),  # Nijmegen Depot_arr
+        # 29: (52.0907, 5.1214)  # Utrecht Depot_arr
     }
 
     depot_to_dummy = {
-        0: 25,  # depot 0 matches with dummy node 25
-        1: 26,
-        2: 27,
-        3: 28,
-        4: 29
+        0: 25  # depot 0 matches with dummy node 25
+        # 1: 26,
+        # 2: 27,
+        # 3: 28,
+        # 4: 29
     }
 
     # Define containers with their attributes
@@ -618,24 +621,15 @@ def construct_network(container_amount):
         nodes[j].add_in_arc(arc)   # Add to destination node's incoming arcs
 
     # Define barges with their capacities and fixed costs
-    barges_data = [
-        (1, 104, 3600, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
-        (2, 99, 3500, 1),
-        (3, 81, 2800, 2),
-        (4, 52, 1800, 3),
-        (5, 28, 3700, 4)
-    ]
-    barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
-              for barge_id, capacity, fixed_cost, origin in barges_data}
 
     # Define trucks with their cost per container
-    HT = {1: 140,
-          2: 200}  # You can add more truck IDs and their costs if needed
-
-    truck = Truck(cost_per_container=HT)
+    # HT = {1: 140,
+    #       2: 200}  # You can add more truck IDs and their costs if needed
 
 
-    return nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy
+
+
+    return nodes, arcs, containers, node_coords, depot_to_dummy
 
 
 
@@ -682,8 +676,8 @@ def print_model_result(model, variables, barges, containers):
 #=============================================================================================================================
 
 def barge_scheduling_problem(
-        nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy,
-        master_routes, greedy_allocation, unassigned_containers,IS
+        nodes, arcs, containers, barges, HT, node_coords, depot_to_dummy,
+        master_routes, greedy_allocation, unassigned_containers,IS, Count, Analysis, k , l, changed_values
     ):
     """
     Optimizes barge and truck scheduling for transporting containers between depots and terminals.
@@ -731,11 +725,15 @@ def barge_scheduling_problem(
     HBk = {k: barges[k].fixed_cost for k in barges.keys()}  # HBk: Fixed costs for each barge
     Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
     Or = {k: barges[k].origin for k in barges.keys()} #origin for each barge
-    Tij = {(arc.origin, arc.destination): arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
+    Tij = {(arc.origin, arc.destination): (1+k*0.05)*arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
+
+    cheat = np.ones(20)
+    cheat[-1] = 0
 
     L = 15     # Handling time per container in minutes (e.g., loading/unloading time)
-    gamma = 100 # Penalty cost for visiting sea terminals
-
+    gamma = 100 + l * 5 + 5 - 5 * cheat[l] # Penalty cost for visiting sea terminals
+    changed_values.update({"gamma": gamma})
+    changed_values.update({"Tij": Tij})
     #=========================================================================================================================
     #  Define Decision Variables
     #=========================================================================================================================
@@ -1045,8 +1043,13 @@ def barge_scheduling_problem(
     model.setParam('OutputFlag', True)
     model.setParam('StartNodeLimit',2000)
     # Enable solver output
-    model.setParam('TimeLimit', 1800)      # Set a time limit of 5 minutes (300 seconds)
-
+    model.setParam("MIPFocus", 3)  # Emphasize feasibility")
+    model.setParam("presolve", 2)
+    model.setParam("heuristics", 0.7)
+    model.setParam("Cuts", 3)
+    model.setParam("MIRCuts", 2)
+    model.setParam('TimeLimit', 1200)      # Set a time limit of 5 minutes (300 seconds)
+    model.setParam('MIPGap', 0.35)
     # Start the optimization process
     model.optimize()
 
@@ -1093,7 +1096,8 @@ def barge_scheduling_problem(
     #  Output Results and Visualization
     #=========================================================================================================================
 
-    output_base = f"random_generation_C_{number_containers}_"
+    string = Analysis.replace(" ", "_")
+    output_base = f"Sensitivity_analysis_" + string + "_" + str(Count) + ".png"
     # Print the optimization results: objective value, container allocations, and barge routes
     print_model_result(model, variables, barges, containers)
 
@@ -1102,37 +1106,31 @@ def barge_scheduling_problem(
     # visualize_routes(nodes, barges, variables, containers, node_coords,file_name=output_base+"interactive_route.html")
     #
     # # Visualize the schedule in gantt chart format of container movements
-    visualize_schedule_random(nodes, barges, variables, containers,output_file=output_base+"gantt_schedule.png")
+    visualize_schedule_random(nodes, barges, variables, containers, Count, Analysis, output_file=output_base)
     # visualize_routes_terminals(nodes, barges, variables, containers, node_coords, output_file=output_base+"route_terminals.png")
 
     if model.status == GRB.OPTIMAL:
         objective_value = model.objVal
+        Bound = model.ObjBound
+        Gap = model.MIPGap
+        OBG = [objective_value, Bound, Gap]
     else:
-        objective_value = "No optimal solution found."
+        objective_value = model.objVal
+        Bound = model.ObjBound
+        Gap = model.MIPGap
+        OBG = [objective_value, Bound, Gap]
 
-    return objective_value
+    return OBG, variables, changed_values
 
 
-
-import os
-import pandas as pd
-
-def write_results_to_csv(file_name, count, objective_value, allocation):
-    """
-    Writes results to a CSV file, appending new results if the file exists.
-    Ensures the count is incrementally tracked unless it is the base iteration (count == 0).
-
-    Args:
-        file_name (str): The name of the results CSV file.
-        count (int): The current iteration count.
-        objective_value (float): The objective value from the optimization.
-        allocation (str): Formatted string containing allocation results.
-    """
+def write_results_to_csv(file_name, Analysis, count, objective_value, variables, Changed_value):
     # Prepare results as a dictionary
     results = {
         "Count": [count],
+        "Analysis": [Analysis],
         "Objective Value": [objective_value],
-        "Allocation": [allocation]
+        "Variables": [variables],
+        "Changed value": [Changed_value]
     }
 
     # Convert to DataFrame
@@ -1150,16 +1148,42 @@ def write_results_to_csv(file_name, count, objective_value, allocation):
 
 
 
-def execute_gurobi_optimization(nr_c, IS, i, file_name="results.csv"):
+def execute_gurobi_optimization(nr_c, IS, i, j, k, l, m, Analysis, file_name="results.csv"):
     """
     Executes the greedy algorithm, optimizes with Gurobi, and maintains consistent output and visualization.
     """
     # Step 1: Execute Greedy Assignment
     container_amount = nr_c
-    nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy = construct_network(container_amount=container_amount)
+    nodes, arcs, containers, node_coords, depot_to_dummy = construct_network(container_amount=container_amount)
+    changed_values = {}
+    cheat = np.ones(20)
+    cheat[-1] = 0
+
+    HT = {1: 110,
+          2: 130}
+
+    barges_data = [
+        (1, 15+m-cheat[m]*6+1, 250 + 150*j+150, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
+        (2, 11+m-cheat[m]*6+1, 200 + 120*j+150, 0),
+        (3, 7+m-cheat[m]*6+1, 160 + 72*j+150, 0)
+    ]
+    barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
+              for barge_id, capacity, fixed_cost, origin in barges_data}
+    changed_values.update({"barges": barges_data})
+    # truck = Truck(cost_per_container=HT)
 
     #CHANGE PARAMETERS
-    Count = i
+    Count = max(i, j, k, l, m)
+
+
+    # Increase the truck costs in HT
+    for truck_id, truck_cost in HT.items():
+        HT[truck_id] = HT[truck_id] + 15 * i - cheat[i] * 65 + 15
+    changed_values.update({"Trucks": HT})
+    # Update the truck object with the new HT values
+
+    # Check the updated truck costs
+    print(f"Updated truck costs: {HT}", f"Updated barge costs: {barges[1].fixed_cost, barges[2].fixed_cost, barges[3].fixed_cost}", f"Count = {Count}")
 
 
     master_route_sequence = [
@@ -1174,9 +1198,9 @@ def execute_gurobi_optimization(nr_c, IS, i, file_name="results.csv"):
     )
 
     # Step 2: Optimize with Gurobi using Greedy Assignment as MIP Start
-    objective_value = barge_scheduling_problem(
-        nodes, arcs, containers, barges, truck, HT, node_coords, depot_to_dummy,
-        master_routes, greedy_allocation, unassigned_containers, IS
+    objective_value, variables, changed_values = barge_scheduling_problem(
+        nodes, arcs, containers, barges, HT, node_coords, depot_to_dummy,
+        master_routes, greedy_allocation, unassigned_containers, IS, Count, Analysis, k, l, changed_values
     )
 
     #Step 3: Output Results
@@ -1193,52 +1217,72 @@ def execute_gurobi_optimization(nr_c, IS, i, file_name="results.csv"):
             print(f"Container IDs: {unassigned_containers}")
 
 
-
-    else:
-        # Build the string for `allocation`
-        allocation_str = "\nGreedy Allocation Results:\n"
-        for barge_id, result in greedy_allocation.items():
-            allocation_str += (
-                f"Barge {barge_id} has {len(result.containers)} containers:\n"
-                f"Containers: {result.containers}\n"
-                f"Route: {result.route}\n"
-                f"Departure Time: {result.departure_time} minutes\n\n"
-            )
-
-        if unassigned_containers:
-            allocation_str += (
-                f"Containers assigned to trucks: {len(unassigned_containers)}\n"
-                f"Container IDs: {unassigned_containers}\n"
-            )
-
-        # Store the result in `allocation`
-        allocation = allocation_str
-
-        # Use `write_results_to_csv`
-        write_results_to_csv(file_name, Count, objective_value, allocation)
+    # Use `write_results_to_csv`
+    write_results_to_csv(file_name, Analysis, Count, objective_value, variables, changed_values)
 
 
 
 if __name__ == "__main__":
-    number_containers = 15
-    IS = True
+    number_containers = 35
+    IS = False
     file_name = "results.csv"
-    execute_gurobi_optimization(number_containers, IS, 0, file_name)
-    execute_gurobi_optimization(number_containers, IS, 1, file_name)
+
+
+    #execute_gurobi_optimization(number_containers, IS, 0, 0, 0, 0, 0, "Base Case", file_name)
+    # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, i, -1, 0, -1, -1, "Truck costs", file_name)
+    # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, i, 0, -1, -1, "Barge costs", file_name)
+    for i in range(20):
+        execute_gurobi_optimization(number_containers, IS, -1, -1, 0, -1, i, "Barge capacity", file_name)
+    # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, -1, i, -1, -1, "Travel time", file_name)
+    # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, -1, 0, i, -1, "Penalty cost", file_name)
 
 
 
 
-    # execute_sensitivity_analysis(parameter_changes)
-    # parameter_changes = [
-    #     ["Truck.cost_per_container", "*2"],  # Double the truck cost
-    # ]
-    # model = {
-    #     "Truck": Truck
-    # }
-    # apply_change(parameter_changes, model)
 
-    #execute_sensitivity_analysis(parameter_changes, model)
+
+
+
+
+
+
+
+state = 0
+# CONVERTING RESULTS INTO PLOTS
+if state:
+    file_name = "results.csv"
+    df = pd.read_csv(file_name, header=None)
+    df.columns = ['Count', 'Analysis', 'Objective Value', 'Variables', 'Changed value']
+
+    # Convert the 'Objective Value' column from string to list
+    df['Objective Value'] = df['Objective Value'].apply(
+        lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
+
+    # Extract the first element of the 'Objective Value' list for plotting
+    df['ObjValue_First'] = df['Objective Value'].apply(lambda arr: arr[0] if isinstance(arr, list) else None)
+
+    # Filter the DataFrame for the first 20 rows
+    plot_df = df.iloc[0:20]
+    count = plot_df['Count']
+    objective_values = plot_df['ObjValue_First']
+
+    #PLOTTING
+    plt.figure(figsize=(10, 6))
+    plt.plot(count, objective_values, marker='o', linestyle='-', color='b')
+
+    plt.xlabel('Count')
+    plt.ylabel('Objective Value')
+    plt.title('Objective Value vs. Count')
+    plt.grid(True)
+    plt.show()
+
+
+
+
 
 
 

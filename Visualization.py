@@ -292,7 +292,7 @@ def visualize_schedule(nodes, barges, variables, containers):
     plt.tight_layout()
     plt.show()
 
-def visualize_schedule_random(nodes, barges, variables, containers,output_file):
+def visualize_schedule_random(nodes, barges, variables, containers, Count, Analysis, output_file):
     import matplotlib.pyplot as plt
     import pandas as pd
 
@@ -411,14 +411,20 @@ def visualize_schedule_random(nodes, barges, variables, containers,output_file):
     ax.set_xlabel('Time', fontsize=10)
     ax.set_yticks(df['Row'])
     ax.set_yticklabels([])  # Remove repeated barge labels from individual rows
-    ax.set_title('Schedule of Barges', fontsize=12)
+    ax.set_title(f"Schedule of Barges for {Analysis} {Count}", fontsize=12)
     ax.grid(True, axis='x', linestyle='--', alpha=0.5)
 
     # Adjust x-axis limits and figure layout
     ax.set_xlim(left=df['Start'].min() - 200, right=df['End'].max() + 50)  # Extended for spacing
     plt.tight_layout(rect=(0.15, 0, 1, 1))  # Allocate space for barge labels on the left
-    plt.show()
+
     plt.savefig(output_file)
+    plt.close()
+
+
+    print(f"Schedule visualization has been saved to to '{output_file}'.")
+
+
 
 
 
@@ -908,6 +914,7 @@ def visualize_routes_terminals(
 
     # Save the figure
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
     plt.show()
     print(f"Map saved as {output_file}")
 
