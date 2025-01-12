@@ -725,13 +725,13 @@ def barge_scheduling_problem(
     HBk = {k: barges[k].fixed_cost for k in barges.keys()}  # HBk: Fixed costs for each barge
     Qk = {k: barges[k].capacity for k in barges.keys()}     # Qk: Capacities for each barge
     Or = {k: barges[k].origin for k in barges.keys()} #origin for each barge
-    Tij = {(arc.origin, arc.destination): (1+k*0.05)*arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
+    Tij = {(arc.origin, arc.destination): (1-k*0.1)*arc.travel_time for arc in arcs}  # Tij: Travel times between nodes
 
     cheat = np.ones(20)
     cheat[-1] = 0
 
     L = 15     # Handling time per container in minutes (e.g., loading/unloading time)
-    gamma = 100 + l * 5 + 5 - 5 * cheat[l] # Penalty cost for visiting sea terminals
+    gamma = 100 -l * 5 + 5 - 5 * cheat[l] # Penalty cost for visiting sea terminals
     changed_values.update({"gamma": gamma})
     changed_values.update({"Tij": Tij})
     #=========================================================================================================================
@@ -1049,7 +1049,7 @@ def barge_scheduling_problem(
     model.setParam("Cuts", 3)
     model.setParam("MIRCuts", 2)
     model.setParam('TimeLimit', 1200)      # Set a time limit of 5 minutes (300 seconds)
-    model.setParam('MIPGap', 0.35)
+    model.setParam('MIPGap', 0.15)
     # Start the optimization process
     model.optimize()
 
@@ -1159,13 +1159,13 @@ def execute_gurobi_optimization(nr_c, IS, i, j, k, l, m, Analysis, file_name="re
     cheat = np.ones(20)
     cheat[-1] = 0
 
-    HT = {1: 110,
-          2: 130}
+    HT = {1: 200,
+          2: 230}
 
     barges_data = [
-        (1, 15+m-cheat[m]*6+1, 250 + 150*j+150, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
-        (2, 11+m-cheat[m]*6+1, 200 + 120*j+150, 0),
-        (3, 7+m-cheat[m]*6+1, 160 + 72*j+150, 0)
+        (1, 15+m*2-cheat[m]*6+1, 750 + 150*j+150, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
+        (2, 11+m*2-cheat[m]*6+1, 600 + 120*j+150, 0),
+        (3, 7+m*2-cheat[m]*6+1, 360 + 72*j+150, 0)
     ]
     barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
               for barge_id, capacity, fixed_cost, origin in barges_data}
@@ -1229,15 +1229,15 @@ if __name__ == "__main__":
 
 
     #execute_gurobi_optimization(number_containers, IS, 0, 0, 0, 0, 0, "Base Case", file_name)
-    # for i in range(20):
-    #     execute_gurobi_optimization(number_containers, IS, i, -1, 0, -1, -1, "Truck costs", file_name)
+    for i in range(4,6):
+        execute_gurobi_optimization(number_containers, IS, i, -1, 0, -1, -1, "Truck costs", file_name)
     # for i in range(20):
     #     execute_gurobi_optimization(number_containers, IS, -1, i, 0, -1, -1, "Barge costs", file_name)
-    for i in range(20):
-        execute_gurobi_optimization(number_containers, IS, -1, -1, 0, -1, i, "Barge capacity", file_name)
     # for i in range(20):
+    #     execute_gurobi_optimization(number_containers, IS, -1, -1, 0, -1, i, "Barge capacity", file_name)
+    # for i in range(2,10):
     #     execute_gurobi_optimization(number_containers, IS, -1, -1, i, -1, -1, "Travel time", file_name)
-    # for i in range(20):
+    # for i in range(6):
     #     execute_gurobi_optimization(number_containers, IS, -1, -1, 0, i, -1, "Penalty cost", file_name)
 
 
