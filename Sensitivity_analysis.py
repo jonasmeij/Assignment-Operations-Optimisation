@@ -731,7 +731,7 @@ def barge_scheduling_problem(
     cheat[-1] = 0
 
     L = 15     # Handling time per container in minutes (e.g., loading/unloading time)
-    gamma = 100 -l * 5 + 5 - 5 * cheat[l] # Penalty cost for visiting sea terminals
+    gamma = 100 + l * 5 + 5 - 5 * cheat[l] # Penalty cost for visiting sea terminals
     changed_values.update({"gamma": gamma})
     changed_values.update({"Tij": Tij})
     #=========================================================================================================================
@@ -1048,8 +1048,8 @@ def barge_scheduling_problem(
     model.setParam("heuristics", 0.7)
     model.setParam("Cuts", 3)
     model.setParam("MIRCuts", 2)
-    model.setParam('TimeLimit', 1200)      # Set a time limit of 5 minutes (300 seconds)
-    model.setParam('MIPGap', 0.15)
+    model.setParam('TimeLimit', 20000)      # Set a time limit of 5 minutes (300 seconds)
+    model.setParam('MIPGap', 0.05)
     # Start the optimization process
     model.optimize()
 
@@ -1156,16 +1156,16 @@ def execute_gurobi_optimization(nr_c, IS, i, j, k, l, m, Analysis, file_name="re
     container_amount = nr_c
     nodes, arcs, containers, node_coords, depot_to_dummy = construct_network(container_amount=container_amount)
     changed_values = {}
-    cheat = np.ones(20)
+    cheat = np.ones(40)
     cheat[-1] = 0
 
-    HT = {1: 200,
-          2: 230}
+    HT = {1: 175,
+          2: 195}
 
     barges_data = [
-        (1, 15+m*2-cheat[m]*6+1, 750 + 150*j+150, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
-        (2, 11+m*2-cheat[m]*6+1, 600 + 120*j+150, 0),
-        (3, 7+m*2-cheat[m]*6+1, 360 + 72*j+150, 0)
+        (1, 15+m*1-cheat[m]*6+1, 250 + 150*j+150, 0),  # Barge 1: Capacity=104, Fixed Cost=3600,
+        (2, 11+m*1-cheat[m]*6+1, 230 + 120*j+120, 0),
+        (3, 7+m*1-cheat[m]*6+1, 238 + 72*j+72, 0)
     ]
     barges = {barge_id: Barge(barge_id, capacity, fixed_cost, origin)
               for barge_id, capacity, fixed_cost, origin in barges_data}
@@ -1221,68 +1221,111 @@ def execute_gurobi_optimization(nr_c, IS, i, j, k, l, m, Analysis, file_name="re
     write_results_to_csv(file_name, Analysis, Count, objective_value, variables, changed_values)
 
 
-
 if __name__ == "__main__":
-    number_containers = 35
+    number_containers = 50
     IS = False
-    file_name = "results.csv"
+    file_name = "results_pc.csv"
 
+    #execute_gurobi_optimization(number_containers, IS, 19, -1, 0, -1, -1, "Truck costs MEGA Tronic", file_name)
 
     #execute_gurobi_optimization(number_containers, IS, 0, 0, 0, 0, 0, "Base Case", file_name)
-    for i in range(4,6):
-        execute_gurobi_optimization(number_containers, IS, i, -1, 0, -1, -1, "Truck costs", file_name)
+    # for i in range(9,20):
+    #     execute_gurobi_optimization(number_containers, IS, i, -1, 0, -1, -1, "Truck costs", file_name)
     # for i in range(20):
     #     execute_gurobi_optimization(number_containers, IS, -1, i, 0, -1, -1, "Barge costs", file_name)
-    # for i in range(20):
+    # for i in range(21,30):
     #     execute_gurobi_optimization(number_containers, IS, -1, -1, 0, -1, i, "Barge capacity", file_name)
-    # for i in range(2,10):
+    # for i in range(20):
     #     execute_gurobi_optimization(number_containers, IS, -1, -1, i, -1, -1, "Travel time", file_name)
-    # for i in range(6):
+    # for i in range(16, 20):
     #     execute_gurobi_optimization(number_containers, IS, -1, -1, 0, i, -1, "Penalty cost", file_name)
 
+import pandas as pd
+import ast
+import matplotlib.pyplot as plt
 
+state = 1  # Set to 1 to run this section
 
-
-
-
-
-
-
-
-
-
-state = 0
-# CONVERTING RESULTS INTO PLOTS
 if state:
-    file_name = "results.csv"
-    df = pd.read_csv(file_name, header=None)
+    file_name = "results_pc.csv"
+
+    # Read the CSV file (adjust header and skiprows as needed)
+    df = pd.read_csv(file_name, header=None, skiprows=1)
+
+    # Manually set column names (adjust these as needed)
     df.columns = ['Count', 'Analysis', 'Objective Value', 'Variables', 'Changed value']
+    print(df.head())
 
-    # Convert the 'Objective Value' column from string to list
-    df['Objective Value'] = df['Objective Value'].apply(
-        lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
+    # Define safe_eval to safely convert string representations of lists
+    def safe_eval(val):
+        try:
+            return ast.literal_eval(val) if isinstance(val, str) else val
+        except (ValueError, SyntaxError):
+            return None
 
-    # Extract the first element of the 'Objective Value' list for plotting
-    df['ObjValue_First'] = df['Objective Value'].apply(lambda arr: arr[0] if isinstance(arr, list) else None)
+    # Convert the 'Objective Value' column from string to an actual list
+    df['Objective Value'] = df['Objective Value'].apply(safe_eval)
 
-    # Filter the DataFrame for the first 20 rows
-    plot_df = df.iloc[0:20]
+    # Extract the first element of the 'Objective Value' list as the objective value
+    df['ObjValue_First'] = df['Objective Value'].apply(
+        lambda arr: arr[0] if isinstance(arr, list) and len(arr) > 0 else None
+    )
+
+    # Extract the gap (assumed to be the third element in the list) and convert to percent
+    df['Gap Percent'] = df['Objective Value'].apply(
+        lambda arr: 100 * arr[2] if isinstance(arr, list) and len(arr) > 2 and arr[2] is not None else None
+    )
+
+    # Debug: check the converted values
+    print(df[['Objective Value', 'ObjValue_First', 'Gap Percent']].head(10))
+
+    # *** Define two row ranges based on indices ***
+    # Adjust these indices to select the rows corresponding to your desired ranges.
+    # For example, if rows 205:221 correspond to the range for 0-15 and rows 221:227 correspond to the range 16-19:
+    range1 = df.iloc[144:164]  # first range (e.g., 0–15)
+    range2 = df.iloc[226:235]  # second range (e.g., 16–19)
+
+    # Filter out rows where 'Analysis' contains "Barge capacity"
+    #range1 = range1[~range1['Analysis'].str.contains('Barge capacity', na=False)]
+    #range2 = range2[~range2['Analysis'].str.contains('Barge capacity', na=False)]
+
+    # Combine the two ranges into one DataFrame for plotting
+    plot_df = pd.concat([range1, range2])
+
+    # Extract values for plotting
     count = plot_df['Count']
-    objective_values = plot_df['ObjValue_First']
+    obj_value = plot_df['ObjValue_First']
+    gap_percent = plot_df['Gap Percent']
 
-    #PLOTTING
-    plt.figure(figsize=(10, 6))
-    plt.plot(count, objective_values, marker='o', linestyle='-', color='b')
+    # Create a larger plot with two y-axes
+    fig, ax1 = plt.subplots(figsize=(14, 8))
 
-    plt.xlabel('Count')
-    plt.ylabel('Objective Value')
-    plt.title('Objective Value vs. Count')
-    plt.grid(True)
+    # Plot Objective Value on the left y-axis
+    color_obj = 'red'
+    ln1 = ax1.plot(count, obj_value, marker='s', linestyle='-', color=color_obj, label='Objective Value')
+    ax1.set_xlabel('Count', color='black')
+    ax1.set_ylabel('Objective Value', color='black')
+    ax1.tick_params(axis='x', colors='black')
+    ax1.tick_params(axis='y', colors='black')
+    ax1.grid(True)
+    #ax1.set_ylim(2800, 6000)
+
+    # Create a second y-axis for Gap Percent
+    ax2 = ax1.twinx()
+    color_gap = 'blue'
+    ln2 = ax2.plot(count, gap_percent, marker='o', linestyle='-', color=color_gap, label='Gap Percent')
+    ax2.set_ylabel('Gap in Percent', color='black')
+    ax2.tick_params(axis='y', colors='black')
+    #ax2.set_ylim(32, 46)
+
+    # Combine legends from both axes
+    lns = ln1 + ln2
+    labels = [l.get_label() for l in lns]
+    ax1.legend(lns, labels, loc='best')
+
+    plt.title('Objective Value and Gap Percent vs. Count', color='black')
+    plt.tight_layout()
     plt.show()
-
-
-
-
 
 
 
